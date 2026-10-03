@@ -15,9 +15,25 @@ type User struct {
 	Phone        string
 	Username     string
 	PasswordHash string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// FirstName, LastName, Role and IsActive were added alongside the
+	// original Name/Username fields rather than replacing them, so existing
+	// login-by-username/phone flows keep working unchanged.
+	FirstName string
+	LastName  string
+	Role      string
+	IsActive  bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
+
+// Role values a User may hold. Role defaults to RoleCustomer for every user
+// created through Service.Create; nothing in this codebase yet assigns the
+// other roles.
+const (
+	RoleCustomer = "CUSTOMER"
+	RoleVendor   = "VENDOR"
+	RoleAdmin    = "ADMIN"
+)
 
 // CreateInput is the data required to register a new user. Email, Phone and
 // Username are each optional, but required_without_all enforces that at

@@ -47,6 +47,8 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 		Phone:        phone,
 		Username:     strings.ToLower(strings.TrimSpace(input.Username)),
 		PasswordHash: string(hash),
+		Role:         RoleCustomer,
+		IsActive:     true,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

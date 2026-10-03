@@ -46,6 +46,10 @@ type userRow struct {
 	Phone        sql.NullString `db:"phone"`
 	Username     sql.NullString `db:"username"`
 	PasswordHash string         `db:"password_hash"`
+	FirstName    sql.NullString `db:"first_name"`
+	LastName     sql.NullString `db:"last_name"`
+	Role         string         `db:"role"`
+	IsActive     bool           `db:"is_active"`
 	CreatedAt    time.Time      `db:"created_at"`
 	UpdatedAt    time.Time      `db:"updated_at"`
 }
@@ -58,6 +62,10 @@ func (r userRow) toDomain() User {
 		Phone:        r.Phone.String,
 		Username:     r.Username.String,
 		PasswordHash: r.PasswordHash,
+		FirstName:    r.FirstName.String,
+		LastName:     r.LastName.String,
+		Role:         r.Role,
+		IsActive:     r.IsActive,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
@@ -75,13 +83,14 @@ func nullable(s string) any {
 
 func (repo *MySQLRepository) Create(ctx context.Context, u User) (User, error) {
 	const query = `
-		INSERT INTO users (id, name, email, phone, username, password_hash, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		INSERT INTO users (id, name, email, phone, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	u.ID = uuid.NewString()
 
 	_, err := repo.db.ExecContext(ctx, query,
-		u.ID, u.Name, nullable(u.Email), nullable(u.Phone), nullable(u.Username), u.PasswordHash, u.CreatedAt, u.UpdatedAt)
+		u.ID, u.Name, nullable(u.Email), nullable(u.Phone), nullable(u.Username), u.PasswordHash,
+		nullable(u.FirstName), nullable(u.LastName), u.Role, u.IsActive, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
@@ -109,7 +118,7 @@ func duplicateKeyError(err *mysql.MySQLError) error {
 
 func (repo *MySQLRepository) GetByEmail(ctx context.Context, email string) (User, error) {
 	const query = `
-		SELECT id, name, email, phone, username, password_hash, created_at, updated_at
+		SELECT id, name, email, phone, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at
 		FROM users
 		WHERE email = ?`
 	return repo.getByField(ctx, query, email)
@@ -117,7 +126,7 @@ func (repo *MySQLRepository) GetByEmail(ctx context.Context, email string) (User
 
 func (repo *MySQLRepository) GetByPhone(ctx context.Context, phone string) (User, error) {
 	const query = `
-		SELECT id, name, email, phone, username, password_hash, created_at, updated_at
+		SELECT id, name, email, phone, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at
 		FROM users
 		WHERE phone = ?`
 	return repo.getByField(ctx, query, phone)
@@ -125,7 +134,7 @@ func (repo *MySQLRepository) GetByPhone(ctx context.Context, phone string) (User
 
 func (repo *MySQLRepository) GetByUsername(ctx context.Context, username string) (User, error) {
 	const query = `
-		SELECT id, name, email, phone, username, password_hash, created_at, updated_at
+		SELECT id, name, email, phone, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at
 		FROM users
 		WHERE username = ?`
 	return repo.getByField(ctx, query, username)
@@ -145,7 +154,7 @@ func (repo *MySQLRepository) getByField(ctx context.Context, query, value string
 
 func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (User, error) {
 	const query = `
-		SELECT id, name, email, phone, username, password_hash, created_at, updated_at
+		SELECT id, name, email, phone, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at
 		FROM users
 		WHERE id = ?`
 
