@@ -129,11 +129,25 @@ func TestService_Login_Success(t *testing.T) {
 	_, err := users.Create(ctx, user.CreateInput{Name: "Diego", Email: "diego@example.com", Password: "supersecret"})
 	require.NoError(t, err)
 
-	pair, err := svc.Login(ctx, "diego@example.com", "supersecret")
+	pair, err := svc.Login(ctx, "diego@example.com", "supersecret", "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, pair.AccessToken)
 	assert.NotEmpty(t, pair.RefreshToken)
 	assert.EqualValues(t, 15*60, pair.ExpiresIn)
+}
+
+func TestService_Login_EmbedsDeviceTokenInAccessToken(t *testing.T) {
+	svc, users, _ := newTestService()
+	ctx := context.Background()
+	_, err := users.Create(ctx, user.CreateInput{Name: "Diego", Email: "diego@example.com", Password: "supersecret"})
+	require.NoError(t, err)
+
+	pair, err := svc.Login(ctx, "diego@example.com", "supersecret", "device-abc")
+	require.NoError(t, err)
+
+	_, deviceToken, err := svc.tokens.Parse(pair.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, "device-abc", deviceToken)
 }
 
 func TestService_Login_WrongPassword(t *testing.T) {
@@ -142,14 +156,14 @@ func TestService_Login_WrongPassword(t *testing.T) {
 	_, err := users.Create(ctx, user.CreateInput{Name: "Diego", Email: "diego@example.com", Password: "supersecret"})
 	require.NoError(t, err)
 
-	_, err = svc.Login(ctx, "diego@example.com", "wrong-password")
+	_, err = svc.Login(ctx, "diego@example.com", "wrong-password", "")
 	assert.ErrorIs(t, err, ErrInvalidCredentials)
 }
 
 func TestService_Login_UnknownEmail(t *testing.T) {
 	svc, _, _ := newTestService()
 
-	_, err := svc.Login(context.Background(), "missing@example.com", "whatever")
+	_, err := svc.Login(context.Background(), "missing@example.com", "whatever", "")
 	assert.ErrorIs(t, err, ErrInvalidCredentials)
 }
 
@@ -159,21 +173,38 @@ func TestService_Refresh_RotatesAndDetectsReuse(t *testing.T) {
 	_, err := users.Create(ctx, user.CreateInput{Name: "Diego", Email: "diego@example.com", Password: "supersecret"})
 	require.NoError(t, err)
 
-	pair, err := svc.Login(ctx, "diego@example.com", "supersecret")
+	pair, err := svc.Login(ctx, "diego@example.com", "supersecret", "")
 	require.NoError(t, err)
 
-	rotated, err := svc.Refresh(ctx, pair.RefreshToken)
+	rotated, err := svc.Refresh(ctx, pair.RefreshToken, "")
 	require.NoError(t, err)
 	assert.NotEqual(t, pair.RefreshToken, rotated.RefreshToken)
 
 	// Reusing the old, already-rotated token is treated as theft: it fails
 	// and revokes every refresh token belonging to the user...
-	_, err = svc.Refresh(ctx, pair.RefreshToken)
+	_, err = svc.Refresh(ctx, pair.RefreshToken, "")
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
 
 	// ...including the one obtained from the legitimate rotation above.
-	_, err = svc.Refresh(ctx, rotated.RefreshToken)
+	_, err = svc.Refresh(ctx, rotated.RefreshToken, "")
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+}
+
+func TestService_Refresh_EmbedsDeviceTokenInRotatedAccessToken(t *testing.T) {
+	svc, users, _ := newTestService()
+	ctx := context.Background()
+	_, err := users.Create(ctx, user.CreateInput{Name: "Diego", Email: "diego@example.com", Password: "supersecret"})
+	require.NoError(t, err)
+
+	pair, err := svc.Login(ctx, "diego@example.com", "supersecret", "device-abc")
+	require.NoError(t, err)
+
+	rotated, err := svc.Refresh(ctx, pair.RefreshToken, "device-abc")
+	require.NoError(t, err)
+
+	_, deviceToken, err := svc.tokens.Parse(rotated.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, "device-abc", deviceToken)
 }
 
 func TestService_Logout_RevokesToken(t *testing.T) {
@@ -182,12 +213,12 @@ func TestService_Logout_RevokesToken(t *testing.T) {
 	_, err := users.Create(ctx, user.CreateInput{Name: "Diego", Email: "diego@example.com", Password: "supersecret"})
 	require.NoError(t, err)
 
-	pair, err := svc.Login(ctx, "diego@example.com", "supersecret")
+	pair, err := svc.Login(ctx, "diego@example.com", "supersecret", "")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.Logout(ctx, pair.RefreshToken))
 
-	_, err = svc.Refresh(ctx, pair.RefreshToken)
+	_, err = svc.Refresh(ctx, pair.RefreshToken, "")
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
 
 	// Logout is idempotent.

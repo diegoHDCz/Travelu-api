@@ -20,13 +20,15 @@ func RequireAuth(tokens *TokenManager) httpx.Middleware {
 				return
 			}
 
-			userID, err := tokens.Parse(strings.TrimPrefix(header, bearerPrefix))
+			userID, deviceToken, err := tokens.Parse(strings.TrimPrefix(header, bearerPrefix))
 			if err != nil {
 				httpx.WriteError(r.Context(), w, ErrUnauthorized)
 				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(WithUserID(r.Context(), userID)))
+			ctx := WithUserID(r.Context(), userID)
+			ctx = WithDeviceToken(ctx, deviceToken)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

@@ -74,6 +74,26 @@ func TestHandler_Register_DuplicateEmail(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "email_taken")
 }
 
+func TestHandler_Login_EmbedsDeviceTokenInAccessToken(t *testing.T) {
+	h, tm := newTestHandler()
+
+	doJSON(t, h.Register, http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"name": "Diego", "email": "diego@example.com", "password": "supersecret",
+	})
+
+	rec := doJSON(t, h.Login, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"login": "diego@example.com", "password": "supersecret", "device_token": "device-abc",
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var tokens tokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tokens))
+
+	_, deviceToken, err := tm.Parse(tokens.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, "device-abc", deviceToken)
+}
+
 func TestHandler_Login_InvalidCredentials(t *testing.T) {
 	h, _ := newTestHandler()
 

@@ -55,9 +55,13 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 // service decides which based on its shape. It is intentionally not
 // validated beyond "required": a format-specific check here (e.g. "email")
 // would reject the phone/username cases.
+// loginRequest.DeviceToken is the push-notification token of the device the
+// client is authenticating from. It is optional; when present, it is
+// embedded in the access token's device_token claim.
 type loginRequest struct {
-	Login    string `json:"login" validate:"required"`
-	Password string `json:"password" validate:"required"`
+	Login       string `json:"login" validate:"required"`
+	Password    string `json:"password" validate:"required"`
+	DeviceToken string `json:"device_token" validate:"omitempty,max=512"`
 }
 
 type tokenResponse struct {
@@ -82,7 +86,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.service.Login(r.Context(), req.Login, req.Password)
+	pair, err := h.service.Login(r.Context(), req.Login, req.Password, req.DeviceToken)
 	if err != nil {
 		httpx.WriteError(r.Context(), w, err)
 		return
@@ -91,8 +95,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, newTokenResponse(pair))
 }
 
+// refreshRequest.DeviceToken behaves like loginRequest.DeviceToken: it is
+// re-embedded in the rotated access token's device_token claim.
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
+	DeviceToken  string `json:"device_token" validate:"omitempty,max=512"`
 }
 
 // Refresh handles POST /api/v1/auth/refresh.
@@ -103,7 +110,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.service.Refresh(r.Context(), req.RefreshToken)
+	pair, err := h.service.Refresh(r.Context(), req.RefreshToken, req.DeviceToken)
 	if err != nil {
 		httpx.WriteError(r.Context(), w, err)
 		return

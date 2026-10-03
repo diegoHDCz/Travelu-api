@@ -50,10 +50,13 @@ func (s *Service) Register(ctx context.Context, input user.CreateInput) (user.Us
 }
 
 // Login verifies a login identifier (email, phone or username) plus
-// password and issues a new token pair. It returns the same generic
-// ErrInvalidCredentials whether the identifier does not exist or the
-// password is wrong, so callers cannot enumerate registered accounts.
-func (s *Service) Login(ctx context.Context, login, password string) (TokenPair, error) {
+// password and issues a new token pair. deviceToken is the push-notification
+// token of the device the client is authenticating from, embedded in the
+// access token's device_token claim; pass "" if the client did not send
+// one. Login returns the same generic ErrInvalidCredentials whether the
+// identifier does not exist or the password is wrong, so callers cannot
+// enumerate registered accounts.
+func (s *Service) Login(ctx context.Context, login, password, deviceToken string) (TokenPair, error) {
 	u, err := s.users.GetByLogin(ctx, login)
 	if err != nil {
 		if errors.Is(err, user.ErrNotFound) {
@@ -66,13 +69,15 @@ func (s *Service) Login(ctx context.Context, login, password string) (TokenPair,
 		return TokenPair{}, ErrInvalidCredentials
 	}
 
-	return s.issueTokenPair(ctx, u.ID)
+	return s.issueTokenPair(ctx, u.ID, deviceToken)
 }
 
 // Refresh rotates a refresh token: the presented token is revoked and a new
-// pair is issued. Reuse of an already-revoked token is treated as a sign of
-// theft and revokes every refresh token belonging to that user.
-func (s *Service) Refresh(ctx context.Context, plainToken string) (TokenPair, error) {
+// pair is issued, with deviceToken embedded in the new access token's
+// device_token claim (pass "" if the client did not send one). Reuse of an
+// already-revoked token is treated as a sign of theft and revokes every
+// refresh token belonging to that user.
+func (s *Service) Refresh(ctx context.Context, plainToken, deviceToken string) (TokenPair, error) {
 	rt, err := s.refreshTokens.GetByTokenHash(ctx, hashToken(plainToken))
 	if err != nil {
 		if errors.Is(err, errRefreshTokenNotFound) {
@@ -96,7 +101,7 @@ func (s *Service) Refresh(ctx context.Context, plainToken string) (TokenPair, er
 		return TokenPair{}, fmt.Errorf("revoke used refresh token: %w", err)
 	}
 
-	return s.issueTokenPair(ctx, rt.UserID)
+	return s.issueTokenPair(ctx, rt.UserID, deviceToken)
 }
 
 // Logout revokes the given refresh token. It is idempotent: an unknown or
@@ -117,8 +122,8 @@ func (s *Service) Logout(ctx context.Context, plainToken string) error {
 	return s.refreshTokens.Revoke(ctx, rt.ID)
 }
 
-func (s *Service) issueTokenPair(ctx context.Context, userID string) (TokenPair, error) {
-	access, ttl, err := s.tokens.Generate(userID)
+func (s *Service) issueTokenPair(ctx context.Context, userID, deviceToken string) (TokenPair, error) {
+	access, ttl, err := s.tokens.Generate(userID, deviceToken)
 	if err != nil {
 		return TokenPair{}, fmt.Errorf("generate access token: %w", err)
 	}
