@@ -2,10 +2,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/subosito/gotenv"
 )
 
 // Config holds every environment-driven setting the application needs.
@@ -35,6 +38,12 @@ func (c Config) IsProduction() bool {
 // Load parses the environment into a Config and validates invariants that
 // the env tags alone cannot express, such as the minimum JWT secret length.
 func Load() (Config, error) {
+	if os.Getenv("APP_ENV") != "production" {
+		if err := gotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Config{}, fmt.Errorf("load .env: %w", err)
+		}
+	}
+
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
