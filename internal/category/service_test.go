@@ -17,6 +17,30 @@ type fakeRepository struct {
 	nextID int64
 }
 
+// Update implements [Repository].
+func (f *fakeRepository) Update(_ context.Context, c Category) (Category, error) {
+	existing, ok := f.byID[c.ID]
+	if !ok {
+		return Category{}, ErrNotFound
+	}
+
+	if other, exists := f.byName[c.Name]; exists && other.ID != c.ID {
+		return Category{}, ErrNameTaken
+	}
+	if other, exists := f.bySlug[c.Slug]; exists && other.ID != c.ID {
+		return Category{}, ErrSlugTaken
+	}
+
+	delete(f.byName, existing.Name)
+	delete(f.bySlug, existing.Slug)
+
+	c.CreatedAt = existing.CreatedAt
+	f.byID[c.ID] = c
+	f.byName[c.Name] = c
+	f.bySlug[c.Slug] = c
+	return c, nil
+}
+
 func newFakeRepository() *fakeRepository {
 	return &fakeRepository{
 		byID:   map[string]Category{},
@@ -92,4 +116,29 @@ func TestService_GetBySlug_NotFound(t *testing.T) {
 
 	_, err := svc.GetBySlug(context.Background(), "missing")
 	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestService_Update(t *testing.T) {
+	svc := NewService(newFakeRepository())
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, CreateInput{Name: "Hotels", Slug: "hotels"})
+	require.NoError(t, err)
+
+	updated, err := svc.Update(ctx, UpdateInput{
+		ID:          created.ID,
+		Name:        "Updated Hotels",
+		Slug:        "updated-hotels",
+		Description: "Updated description",
+		Icon:        "updated-icon.png",
+		IsActive:    false,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, created.ID, updated.ID)
+	assert.Equal(t, "Updated Hotels", updated.Name)
+	assert.Equal(t, "updated-hotels", updated.Slug)
+	assert.Equal(t, "Updated description", updated.Description)
+	assert.Equal(t, "updated-icon.png", updated.Icon)
+	assert.False(t, updated.IsActive)
 }

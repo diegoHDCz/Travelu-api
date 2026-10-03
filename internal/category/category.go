@@ -24,3 +24,12 @@ type CreateInput struct {
 	Description string `json:"description" validate:"omitempty"`
 	Icon        string `json:"icon" validate:"omitempty,max=255"`
 }
+
+type UpdateInput struct {
+	ID          string `json:"id" validate:"required,uuid"`
+	Name        string `json:"name" validate:"required,min=2,max=100"`
+	Slug        string `json:"slug" validate:"required,min=2,max=100"`
+	Description string `json:"description" validate:"omitempty"`
+	Icon        string `json:"icon" validate:"omitempty,max=255"`
+	IsActive    bool   `json:"is_active"`
+}

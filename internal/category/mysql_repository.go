@@ -76,6 +76,9 @@ func (repo *MySQLRepository) Create(ctx context.Context, c Category) (Category, 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 	c.ID = uuid.NewString()
+	c.CreatedAt = time.Now().UTC()
+	c.UpdatedAt = time.Now().UTC()
+	c.IsActive = true
 
 	_, err := repo.db.ExecContext(ctx, query,
 		c.ID, c.Name, c.Slug, nullable(c.Description), nullable(c.Icon), c.IsActive, c.CreatedAt, c.UpdatedAt)
@@ -143,4 +146,33 @@ func (repo *MySQLRepository) List(ctx context.Context) ([]Category, error) {
 		categories[i] = row.toDomain()
 	}
 	return categories, nil
+}
+
+func (repo *MySQLRepository) Update(ctx context.Context, c Category) (Category, error) {
+	const query = `
+		UPDATE categories
+		SET name = ?, slug = ?, description = ?, icon = ?, is_active = ?, updated_at = ?
+		WHERE id = ?`
+
+	c.UpdatedAt = time.Now().UTC()
+
+	result, err := repo.db.ExecContext(ctx, query,
+		c.Name, c.Slug, nullable(c.Description), nullable(c.Icon), c.IsActive, c.UpdatedAt, c.ID)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
+			return Category{}, duplicateKeyError(mysqlErr)
+		}
+		return Category{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Category{}, err
+	}
+	if rowsAffected == 0 {
+		return Category{}, ErrNotFound
+	}
+
+	return c, nil
 }

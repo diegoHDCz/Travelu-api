@@ -10,4 +10,5 @@ type Repository interface {
 	GetByID(ctx context.Context, id string) (Category, error)
 	GetBySlug(ctx context.Context, slug string) (Category, error)
 	List(ctx context.Context) ([]Category, error)
+	Update(ctx context.Context, c Category) (Category, error)
 }

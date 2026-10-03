@@ -16,6 +16,8 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/diegoczajka/travelu-api/internal/auth"
+	"github.com/diegoczajka/travelu-api/internal/booking"
+	"github.com/diegoczajka/travelu-api/internal/category"
 	"github.com/diegoczajka/travelu-api/internal/config"
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
@@ -114,6 +116,16 @@ func buildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB) http.Hand
 	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 	mux.Handle("GET /api/v1/users/me", auth.RequireAuth(tokenManager)(http.HandlerFunc(authHandler.Me)))
+
+	requireAuth := auth.RequireAuth(tokenManager)
+
+	categoryRepo := category.NewMySQLRepository(db)
+	categoryService := category.NewService(categoryRepo)
+	category.NewHandler(categoryService).RegisterRoutes(mux, requireAuth)
+
+	bookingRepo := booking.NewMySQLRepository(db)
+	bookingService := booking.NewService(bookingRepo)
+	booking.NewHandler(bookingService).RegisterRoutes(mux, requireAuth)
 
 	return httpx.Chain(mux,
 		httpx.Recover(),
