@@ -20,6 +20,7 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/category"
 	"github.com/diegoczajka/travelu-api/internal/config"
 	"github.com/diegoczajka/travelu-api/internal/listing"
+	"github.com/diegoczajka/travelu-api/internal/platform/apidocs"
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
@@ -114,6 +115,7 @@ func buildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB) http.Hand
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(db))
+	apidocs.RegisterRoutes(mux)
 	mux.Handle("POST /api/v1/auth/register", registerLimiter.Middleware()(http.HandlerFunc(authHandler.Register)))
 	mux.Handle("POST /api/v1/auth/login", loginLimiter.Middleware()(http.HandlerFunc(authHandler.Login)))
 	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.Refresh)
