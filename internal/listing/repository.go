@@ -9,4 +9,5 @@ type Repository interface {
 	Create(ctx context.Context, l Listing) (Listing, error)
 	GetByID(ctx context.Context, id string) (Listing, error)
 	ListActive(ctx context.Context) ([]Listing, error)
+	Update(ctx context.Context, l Listing) (Listing, error)
 }

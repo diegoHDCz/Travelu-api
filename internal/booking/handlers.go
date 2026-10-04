@@ -13,8 +13,13 @@ type Handler struct {
 	service *Service
 }
 
+// var _ enforces at compile time that *Handler satisfies BookingHandlers; a
+// missing or mis-signatured method fails the build here instead of at the
+// call site that constructs the interface.
+var _ BookingHandlers = (*Handler)(nil)
+
 // NewHandler builds a booking Handler.
-func NewHandler(service *Service) *Handler {
+func NewHandler(service *Service) BookingHandlers {
 	return &Handler{service: service}
 }
 

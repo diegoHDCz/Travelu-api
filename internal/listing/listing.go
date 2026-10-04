@@ -57,3 +57,24 @@ type CreateInput struct {
 	Images        string    `json:"images" validate:"omitempty"`
 	Amenities     string    `json:"amenities" validate:"omitempty"`
 }
+
+// UpdateInput is the data required to update an existing listing. VendorID
+// is intentionally absent: ownership of a listing cannot be transferred
+// through this endpoint.
+type UpdateInput struct {
+	ID            string    `json:"id" validate:"required,uuid"`
+	Title         string    `json:"title" validate:"required,min=2,max=255"`
+	Description   string    `json:"description" validate:"required"`
+	Category      string    `json:"category" validate:"required,oneof=HOTEL FLIGHT ACTIVITY PACKAGE"`
+	Location      string    `json:"location" validate:"required,max=255"`
+	City          string    `json:"city" validate:"omitempty,max=100"`
+	Country       string    `json:"country" validate:"omitempty,max=100"`
+	Price         float64   `json:"price" validate:"required,gt=0"`
+	Currency      string    `json:"currency" validate:"omitempty,len=3"`
+	Capacity      *int      `json:"capacity" validate:"omitempty,gt=0"`
+	AvailableFrom time.Time `json:"available_from" validate:"omitempty"`
+	AvailableTo   time.Time `json:"available_to" validate:"omitempty"`
+	Images        string    `json:"images" validate:"omitempty"`
+	Amenities     string    `json:"amenities" validate:"omitempty"`
+	IsActive      bool      `json:"is_active"`
+}

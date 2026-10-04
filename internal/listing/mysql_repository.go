@@ -173,3 +173,32 @@ func (repo *MySQLRepository) ListActive(ctx context.Context) ([]Listing, error) 
 	}
 	return listings, nil
 }
+
+func (repo *MySQLRepository) Update(ctx context.Context, l Listing) (Listing, error) {
+	const query = `
+		UPDATE travel_listings
+		SET title = ?, description = ?, category = ?, location = ?, city = ?, country = ?,
+			price = ?, currency = ?, capacity = ?, available_from = ?, available_to = ?,
+			images = ?, amenities = ?, is_active = ?, updated_at = ?
+		WHERE id = ?`
+
+	l.UpdatedAt = time.Now().UTC()
+
+	result, err := repo.db.ExecContext(ctx, query,
+		l.Title, l.Description, l.Category, l.Location, nullable(l.City), nullable(l.Country),
+		l.Price, l.Currency, nullableCapacity(l.Capacity), nullableTime(l.AvailableFrom), nullableTime(l.AvailableTo),
+		nullable(l.Images), nullable(l.Amenities), l.IsActive, l.UpdatedAt, l.ID)
+	if err != nil {
+		return Listing{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Listing{}, err
+	}
+	if rowsAffected == 0 {
+		return Listing{}, ErrNotFound
+	}
+
+	return l, nil
+}

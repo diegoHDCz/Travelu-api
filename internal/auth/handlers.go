@@ -16,8 +16,13 @@ type Handler struct {
 	service *Service
 }
 
+// var _ enforces at compile time that *Handler satisfies AuthHandlers; a
+// missing or mis-signatured method fails the build here instead of at the
+// call site that constructs the interface.
+var _ AuthHandlers = (*Handler)(nil)
+
 // NewHandler builds an auth Handler.
-func NewHandler(service *Service) *Handler {
+func NewHandler(service *Service) AuthHandlers {
 	return &Handler{service: service}
 }
 

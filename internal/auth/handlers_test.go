@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestHandler() (*Handler, *TokenManager) {
+func newTestHandler() (AuthHandlers, *TokenManager) {
 	users := newFakeUserService()
 	tokens := newFakeRefreshTokenRepository()
 	tm := NewTokenManager(testJWTSecret, 15*time.Minute)

@@ -9,4 +9,5 @@ type Repository interface {
 	Create(ctx context.Context, r Review) (Review, error)
 	GetByID(ctx context.Context, id string) (Review, error)
 	ListByListingID(ctx context.Context, listingID string) ([]Review, error)
+	Update(ctx context.Context, r Review) (Review, error)
 }

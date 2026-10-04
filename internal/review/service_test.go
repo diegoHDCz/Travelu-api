@@ -41,6 +41,23 @@ func (f *fakeRepository) ListByListingID(_ context.Context, listingID string) ([
 	return f.byListing[listingID], nil
 }
 
+func (f *fakeRepository) Update(_ context.Context, r Review) (Review, error) {
+	if _, ok := f.byID[r.ID]; !ok {
+		return Review{}, ErrNotFound
+	}
+	f.byID[r.ID] = r
+
+	reviews := f.byListing[r.ListingID]
+	for i, existing := range reviews {
+		if existing.ID == r.ID {
+			reviews[i] = r
+			break
+		}
+	}
+
+	return r, nil
+}
+
 func TestService_Create(t *testing.T) {
 	svc := NewService(newFakeRepository())
 
@@ -72,5 +89,59 @@ func TestService_GetByID_NotFound(t *testing.T) {
 	svc := NewService(newFakeRepository())
 
 	_, err := svc.GetByID(context.Background(), "missing")
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestService_Update(t *testing.T) {
+	svc := NewService(newFakeRepository())
+	customerID := uuid.NewString()
+
+	created, err := svc.Create(context.Background(), CreateInput{
+		CustomerID: customerID,
+		ListingID:  uuid.NewString(),
+		Rating:     3,
+	})
+	require.NoError(t, err)
+
+	updated, err := svc.Update(context.Background(), UpdateInput{
+		ID:         created.ID,
+		CustomerID: customerID,
+		Rating:     5,
+		Title:      "Great stay",
+		Comment:    "Loved it",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 5, updated.Rating)
+	assert.Equal(t, "Great stay", updated.Title)
+	assert.Equal(t, "Loved it", updated.Comment)
+}
+
+func TestService_Update_WrongCustomer(t *testing.T) {
+	svc := NewService(newFakeRepository())
+
+	created, err := svc.Create(context.Background(), CreateInput{
+		CustomerID: uuid.NewString(),
+		ListingID:  uuid.NewString(),
+		Rating:     3,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.Update(context.Background(), UpdateInput{
+		ID:         created.ID,
+		CustomerID: uuid.NewString(),
+		Rating:     1,
+	})
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestService_Update_NotFound(t *testing.T) {
+	svc := NewService(newFakeRepository())
+
+	_, err := svc.Update(context.Background(), UpdateInput{
+		ID:         "missing",
+		CustomerID: uuid.NewString(),
+		Rating:     1,
+	})
 	assert.ErrorIs(t, err, ErrNotFound)
 }

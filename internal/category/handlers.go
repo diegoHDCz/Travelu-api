@@ -11,7 +11,12 @@ type Handler struct {
 	service *Service
 }
 
-func NewHandler(service *Service) *Handler {
+// var _ enforces at compile time that *Handler satisfies CategoryHandlers;
+// a missing or mis-signatured method fails the build here instead of at
+// the call site that constructs the interface.
+var _ CategoryHandlers = (*Handler)(nil)
+
+func NewHandler(service *Service) CategoryHandlers {
 	return &Handler{service: service}
 }
 

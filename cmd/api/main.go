@@ -19,9 +19,11 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/booking"
 	"github.com/diegoczajka/travelu-api/internal/category"
 	"github.com/diegoczajka/travelu-api/internal/config"
+	"github.com/diegoczajka/travelu-api/internal/listing"
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
+	"github.com/diegoczajka/travelu-api/internal/review"
 	"github.com/diegoczajka/travelu-api/internal/user"
 )
 
@@ -126,6 +128,14 @@ func buildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB) http.Hand
 	bookingRepo := booking.NewMySQLRepository(db)
 	bookingService := booking.NewService(bookingRepo)
 	booking.NewHandler(bookingService).RegisterRoutes(mux, requireAuth)
+
+	listingRepo := listing.NewMySQLRepository(db)
+	listingService := listing.NewService(listingRepo)
+	listing.NewHandler(listingService).RegisterRoutes(mux, requireAuth)
+
+	reviewRepo := review.NewMySQLRepository(db)
+	reviewService := review.NewService(reviewRepo)
+	review.NewHandler(reviewService).RegisterRoutes(mux, requireAuth)
 
 	return httpx.Chain(mux,
 		httpx.Recover(),

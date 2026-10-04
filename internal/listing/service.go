@@ -61,3 +61,32 @@ func (s *Service) GetByID(ctx context.Context, id string) (Listing, error) {
 func (s *Service) ListActive(ctx context.Context) ([]Listing, error) {
 	return s.repo.ListActive(ctx)
 }
+
+// Update overwrites the mutable fields of an existing listing. VendorID is
+// not part of UpdateInput, so ownership is never changed by this call.
+func (s *Service) Update(ctx context.Context, input UpdateInput) (Listing, error) {
+	currency := strings.ToUpper(strings.TrimSpace(input.Currency))
+	if currency == "" {
+		currency = defaultCurrency
+	}
+
+	l := Listing{
+		ID:            input.ID,
+		Title:         strings.TrimSpace(input.Title),
+		Description:   input.Description,
+		Category:      input.Category,
+		Location:      strings.TrimSpace(input.Location),
+		City:          strings.TrimSpace(input.City),
+		Country:       strings.TrimSpace(input.Country),
+		Price:         input.Price,
+		Currency:      currency,
+		Capacity:      input.Capacity,
+		AvailableFrom: input.AvailableFrom,
+		AvailableTo:   input.AvailableTo,
+		Images:        input.Images,
+		Amenities:     input.Amenities,
+		IsActive:      input.IsActive,
+	}
+
+	return s.repo.Update(ctx, l)
+}

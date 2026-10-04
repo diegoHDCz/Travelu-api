@@ -45,6 +45,14 @@ func (f *fakeRepository) ListActive(_ context.Context) ([]Listing, error) {
 	return active, nil
 }
 
+func (f *fakeRepository) Update(_ context.Context, l Listing) (Listing, error) {
+	if _, ok := f.byID[l.ID]; !ok {
+		return Listing{}, ErrNotFound
+	}
+	f.byID[l.ID] = l
+	return l, nil
+}
+
 func TestService_Create(t *testing.T) {
 	svc := NewService(newFakeRepository())
 
@@ -84,5 +92,46 @@ func TestService_GetByID_NotFound(t *testing.T) {
 	svc := NewService(newFakeRepository())
 
 	_, err := svc.GetByID(context.Background(), "missing")
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestService_Update(t *testing.T) {
+	svc := NewService(newFakeRepository())
+
+	created, err := svc.Create(context.Background(), CreateInput{
+		VendorID:    uuid.NewString(),
+		Title:       "Beach Hotel",
+		Description: "A nice hotel",
+		Category:    CategoryHotel,
+		Location:    "Rio de Janeiro",
+		Price:       199.90,
+	})
+	require.NoError(t, err)
+
+	updated, err := svc.Update(context.Background(), UpdateInput{
+		ID:          created.ID,
+		Title:       "Beach Resort",
+		Description: "An even nicer hotel",
+		Category:    CategoryHotel,
+		Location:    "Rio de Janeiro",
+		Price:       249.90,
+		IsActive:    true,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "Beach Resort", updated.Title)
+	assert.Equal(t, 249.90, updated.Price)
+}
+
+func TestService_Update_NotFound(t *testing.T) {
+	svc := NewService(newFakeRepository())
+
+	_, err := svc.Update(context.Background(), UpdateInput{
+		ID:       "missing",
+		Title:    "Beach Resort",
+		Category: CategoryHotel,
+		Location: "Rio de Janeiro",
+		Price:    249.90,
+	})
 	assert.ErrorIs(t, err, ErrNotFound)
 }

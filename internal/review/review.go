@@ -30,3 +30,16 @@ type CreateInput struct {
 	Title      string `json:"title" validate:"omitempty,max=255"`
 	Comment    string `json:"comment" validate:"omitempty"`
 }
+
+// UpdateInput is the data required to update an existing review. ListingID
+// and BookingID are absent: what a review is about never changes, only its
+// rating/title/comment do. CustomerID is checked by Service.Update against
+// the review's original author, so a review can never be edited by anyone
+// but the customer who wrote it.
+type UpdateInput struct {
+	ID         string `json:"id" validate:"required,uuid"`
+	CustomerID string `json:"customer_id" validate:"required,uuid"`
+	Rating     int    `json:"rating" validate:"required,min=1,max=5"`
+	Title      string `json:"title" validate:"omitempty,max=255"`
+	Comment    string `json:"comment" validate:"omitempty"`
+}

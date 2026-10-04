@@ -122,3 +122,27 @@ func (repo *MySQLRepository) ListByListingID(ctx context.Context, listingID stri
 	}
 	return reviews, nil
 }
+
+func (repo *MySQLRepository) Update(ctx context.Context, r Review) (Review, error) {
+	const query = `
+		UPDATE reviews
+		SET rating = ?, title = ?, comment = ?, updated_at = ?
+		WHERE id = ?`
+
+	r.UpdatedAt = time.Now().UTC()
+
+	result, err := repo.db.ExecContext(ctx, query, r.Rating, nullable(r.Title), nullable(r.Comment), r.UpdatedAt, r.ID)
+	if err != nil {
+		return Review{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Review{}, err
+	}
+	if rowsAffected == 0 {
+		return Review{}, ErrNotFound
+	}
+
+	return r, nil
+}
