@@ -24,6 +24,7 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
 	"github.com/diegoczajka/travelu-api/internal/review"
+	"github.com/diegoczajka/travelu-api/internal/tripdate"
 	"github.com/diegoczajka/travelu-api/internal/user"
 )
 
@@ -136,6 +137,10 @@ func buildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB) http.Hand
 	reviewRepo := review.NewMySQLRepository(db)
 	reviewService := review.NewService(reviewRepo)
 	review.NewHandler(reviewService).RegisterRoutes(mux, requireAuth)
+
+	tripDateRepo := tripdate.NewMySQLRepository(db)
+	tripDateService := tripdate.NewService(tripDateRepo)
+	tripdate.NewHandler(tripDateService).RegisterRoutes(mux, requireAuth)
 
 	return httpx.Chain(mux,
 		httpx.Recover(),

@@ -1,0 +1,914 @@
+openapi: 3.0.3
+info:
+  title: travelu-api
+  description: >
+    API REST monolítica do travelu, organizada por domínio. Documenta exatamente
+    o que `cmd/api/main.go` registra no mux: health, auth, categories, bookings,
+    listings, reviews e trip-dates. Todas as rotas `/api/v1/**` exceto
+    `/auth/*` exigem `Authorization: Bearer <access_token>`.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8080
+    description: Desenvolvimento local (PORT default 8080)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+    description: Checagem de saúde usada pelo pipeline de deploy
+  - name: auth
+    description: Registro, login, refresh/rotação de tokens e usuário autenticado
+  - name: categories
+    description: Categorias de listings (hotéis, voos, atividades, pacotes)
+  - name: bookings
+    description: Reservas feitas por clientes sobre um listing
+  - name: listings
+    description: Anúncios publicados por vendors
+  - name: reviews
+    description: Avaliações de clientes sobre um listing
+  - name: trip-dates
+    description: Janelas de data reserváveis de um listing
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Healthcheck do processo e do banco
+      security: []
+      responses:
+        "200":
+          description: Banco acessível
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: ok
+                version: dev
+        "503":
+          description: PingContext no banco falhou
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: unavailable
+                version: dev
+
+  /api/v1/auth/register:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      summary: Cria uma nova conta
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Conta criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Autentica e emite um par de tokens
+      description: >
+        `login` aceita e-mail, telefone ou username — o service decide pelo
+        formato. Erro de credencial inválida é sempre genérico (não dá para
+        descobrir se um e-mail existe). Rate-limited por IP (1 req/s, burst 5).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login efetuado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          description: Credenciais inválidas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error: { code: invalid_credentials, message: invalid login or password }
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: Rate limit excedido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      tags: [auth]
+      summary: Rotaciona o refresh token e emite novo par
+      description: >
+        O token apresentado é revogado imediatamente (rotação a cada uso).
+        Reutilizar um refresh token já revogado é tratado como indício de
+        roubo e revoga **todos** os refresh tokens do usuário.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Novo par de tokens emitido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          description: Refresh token inválido, expirado ou reutilizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error: { code: invalid_refresh_token, message: refresh token is invalid or expired }
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Revoga um refresh token
+      description: Idempotente — chamar de novo com o mesmo token (já revogado) não é erro.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "204":
+          description: Revogado (ou já estava revogado/inexistente)
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/users/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Dados do usuário autenticado
+      responses:
+        "200":
+          description: Usuário autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/categories:
+    post:
+      operationId: createCategory
+      tags: [categories]
+      summary: Cria uma categoria
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "201":
+          description: Categoria criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "409":
+          description: Nome ou slug já em uso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      operationId: listCategories
+      tags: [categories]
+      summary: Lista todas as categorias
+      responses:
+        "200":
+          description: Lista de categorias
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/categories/slug/{slug}:
+    get:
+      operationId: getCategoryBySlug
+      tags: [categories]
+      summary: Busca categoria pelo slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Categoria encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/categories/{id}:
+    get:
+      operationId: getCategoryById
+      tags: [categories]
+      summary: Busca categoria por ID
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: Categoria encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateCategory
+      tags: [categories]
+      summary: Atualiza uma categoria
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCategoryRequest"
+      responses:
+        "200":
+          description: Categoria atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Nome ou slug já em uso por outra categoria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/bookings:
+    post:
+      operationId: createBooking
+      tags: [bookings]
+      summary: Cria uma reserva
+      description: customer_id vem do token autenticado, nunca do corpo da requisição.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBookingRequest"
+      responses:
+        "201":
+          description: Reserva criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      operationId: listMyBookings
+      tags: [bookings]
+      summary: Lista as reservas do usuário autenticado
+      responses:
+        "200":
+          description: Reservas do chamador
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Booking"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/bookings/{id}:
+    get:
+      operationId: getBookingById
+      tags: [bookings]
+      summary: Busca uma reserva por ID
+      description: >
+        Uma reserva que existe mas pertence a outro usuário é reportada como
+        404, nunca 403 — para não permitir sondar quais IDs existem.
+      parameters:
+        - $ref: "#/components/parameters/BookingId"
+      responses:
+        "200":
+          description: Reserva encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/listings:
+    post:
+      operationId: createListing
+      tags: [listings]
+      summary: Cria um anúncio (listing)
+      description: vendor_id vem do token autenticado, nunca do corpo da requisição.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateListingRequest"
+      responses:
+        "201":
+          description: Listing criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Listing"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      operationId: listActiveListings
+      tags: [listings]
+      summary: Lista listings ativos
+      responses:
+        "200":
+          description: Listings ativos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Listing"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/listings/{id}:
+    get:
+      operationId: getListingById
+      tags: [listings]
+      summary: Busca um listing por ID
+      parameters:
+        - $ref: "#/components/parameters/ListingId"
+      responses:
+        "200":
+          description: Listing encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Listing"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateListing
+      tags: [listings]
+      summary: Atualiza um listing
+      description: vendor_id não é alterável por este endpoint.
+      parameters:
+        - $ref: "#/components/parameters/ListingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateListingRequest"
+      responses:
+        "200":
+          description: Listing atualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Listing"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/reviews:
+    post:
+      operationId: createReview
+      tags: [reviews]
+      summary: Cria uma review
+      description: customer_id vem do token autenticado, nunca do corpo da requisição.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReviewRequest"
+      responses:
+        "201":
+          description: Review criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      operationId: listReviewsByListing
+      tags: [reviews]
+      summary: Lista reviews de um listing
+      parameters:
+        - name: listing_id
+          in: query
+          required: true
+          description: Obrigatório — sem ele a API responde 400.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Reviews aprovadas do listing
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Review"
+        "400":
+          description: listing_id ausente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/reviews/{id}:
+    get:
+      operationId: getReviewById
+      tags: [reviews]
+      summary: Busca uma review por ID
+      description: Reviews são conteúdo público — não há checagem de ownership aqui.
+      parameters:
+        - $ref: "#/components/parameters/ReviewId"
+      responses:
+        "200":
+          description: Review encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateReview
+      tags: [reviews]
+      summary: Atualiza uma review
+      description: >
+        Só o autor original pode atualizar a própria review; para qualquer
+        outro chamador a API responde 404 (nunca 403), para não expor quem é
+        o dono.
+      parameters:
+        - $ref: "#/components/parameters/ReviewId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateReviewRequest"
+      responses:
+        "200":
+          description: Review atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/trip-dates:
+    post:
+      operationId: createTripDate
+      tags: [trip-dates]
+      summary: Cria uma janela de data reservável para um listing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTripDateRequest"
+      responses:
+        "201":
+          description: Trip date criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TripDate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      operationId: listTripDatesByListing
+      tags: [trip-dates]
+      summary: Lista as trip dates de um listing
+      parameters:
+        - name: listing_id
+          in: query
+          required: true
+          description: Obrigatório — sem ele a API responde 400.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Trip dates do listing
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TripDate"
+        "400":
+          description: listing_id ausente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/trip-dates/{id}:
+    get:
+      operationId: getTripDateById
+      tags: [trip-dates]
+      summary: Busca uma trip date por ID
+      parameters:
+        - $ref: "#/components/parameters/TripDateId"
+      responses:
+        "200":
+          description: Trip date encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TripDate"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token JWT HS256 emitido por /api/v1/auth/login ou /refresh.
+
+  parameters:
+    CategoryId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BookingId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ListingId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReviewId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TripDateId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthorized:
+      description: Token ausente, inválido ou expirado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error: { code: unauthorized, message: missing or invalid authorization token }
+    ValidationError:
+      description: Corpo inválido ou falhou uma regra de validação
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error: { code: validation_error, message: "Key: 'CreateInput.Name' Error:Field validation for 'Name' failed on the 'required' tag" }
+
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+        version: { type: string }
+
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+      required: [code, message]
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+      required: [error]
+
+    # ---- auth / user ----
+
+    RegisterRequest:
+      type: object
+      description: >
+        Pelo menos um de email/phone/username é obrigatório
+        (required_without_all).
+      properties:
+        name: { type: string, minLength: 2, maxLength: 255 }
+        email: { type: string, format: email, maxLength: 255 }
+        phone: { type: string, maxLength: 20 }
+        username: { type: string, minLength: 3, maxLength: 30, pattern: "^[a-zA-Z0-9]+$" }
+        password: { type: string, minLength: 8, maxLength: 72, format: password }
+      required: [name, password]
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        username: { type: string }
+        created_at: { type: string, format: date-time }
+      required: [id, name, created_at]
+
+    LoginRequest:
+      type: object
+      properties:
+        login: { type: string, description: "Email, telefone ou username" }
+        password: { type: string }
+        device_token: { type: string, maxLength: 512, description: "Push token opcional, embutido no claim device_token do access token" }
+      required: [login, password]
+
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token: { type: string }
+        device_token: { type: string, maxLength: 512 }
+      required: [refresh_token]
+
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token: { type: string }
+      required: [refresh_token]
+
+    TokenPair:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, format: int64, description: "segundos" }
+      required: [access_token, refresh_token, expires_in]
+
+    # ---- categories ----
+
+    CreateCategoryRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        description: { type: string }
+        slug: { type: string, minLength: 2, maxLength: 100 }
+        icon: { type: string, maxLength: 255 }
+      required: [name, slug]
+
+    UpdateCategoryRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateCategoryRequest"
+        - type: object
+          properties:
+            is_active: { type: boolean }
+
+    Category:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        slug: { type: string }
+        icon: { type: string }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, name, slug, is_active, created_at, updated_at]
+
+    # ---- bookings ----
+
+    CreateBookingRequest:
+      type: object
+      properties:
+        listing_id: { type: string, format: uuid }
+        trip_date_id: { type: string, format: uuid }
+        check_in_date: { type: string, format: date-time }
+        check_out_date: { type: string, format: date-time }
+        number_of_guests: { type: integer, minimum: 1, default: 1 }
+        total_price: { type: number, exclusiveMinimum: true, minimum: 0 }
+        currency: { type: string, minLength: 3, maxLength: 3, default: USD }
+        payment_id: { type: string, maxLength: 255 }
+        special_requests: { type: string }
+      required: [listing_id, total_price]
+
+    Booking:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        listing_id: { type: string, format: uuid }
+        trip_date_id: { type: string, format: uuid }
+        check_in_date: { type: string, format: date-time }
+        check_out_date: { type: string, format: date-time }
+        number_of_guests: { type: integer }
+        total_price: { type: number }
+        currency: { type: string }
+        status: { type: string, enum: [PENDING, CONFIRMED, CANCELLED, COMPLETED] }
+        payment_status: { type: string, enum: [PENDING, PAID, REFUNDED] }
+        payment_id: { type: string }
+        special_requests: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, customer_id, listing_id, number_of_guests, total_price, currency, status, payment_status, created_at, updated_at]
+
+    # ---- listings ----
+
+    CreateListingRequest:
+      type: object
+      properties:
+        title: { type: string, minLength: 2, maxLength: 255 }
+        description: { type: string }
+        category: { type: string, enum: [HOTEL, FLIGHT, ACTIVITY, PACKAGE] }
+        location: { type: string, maxLength: 255 }
+        city: { type: string, maxLength: 100 }
+        country: { type: string, maxLength: 100 }
+        price: { type: number, exclusiveMinimum: true, minimum: 0 }
+        currency: { type: string, minLength: 3, maxLength: 3, default: USD }
+        capacity: { type: integer, minimum: 1, nullable: true }
+        available_from: { type: string, format: date-time }
+        available_to: { type: string, format: date-time }
+        images: { type: string }
+        amenities: { type: string }
+      required: [title, description, category, location, price]
+
+    UpdateListingRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateListingRequest"
+        - type: object
+          properties:
+            is_active: { type: boolean }
+
+    Listing:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vendor_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [HOTEL, FLIGHT, ACTIVITY, PACKAGE] }
+        location: { type: string }
+        city: { type: string }
+        country: { type: string }
+        price: { type: number }
+        currency: { type: string }
+        capacity: { type: integer, nullable: true }
+        available_from: { type: string }
+        available_to: { type: string }
+        images: { type: string }
+        amenities: { type: string }
+        rating: { type: number }
+        review_count: { type: integer }
+        is_active: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
+      required: [id, vendor_id, title, category, location, price, currency, rating, review_count, is_active, created_at, updated_at]
+
+    # ---- reviews ----
+
+    CreateReviewRequest:
+      type: object
+      properties:
+        listing_id: { type: string, format: uuid }
+        booking_id: { type: string, format: uuid }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        title: { type: string, maxLength: 255 }
+        comment: { type: string, maxLength: 1000 }
+      required: [listing_id, booking_id, rating]
+
+    UpdateReviewRequest:
+      type: object
+      properties:
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        title: { type: string, maxLength: 255 }
+        comment: { type: string, maxLength: 1000 }
+      required: [rating]
+
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        listing_id: { type: string, format: uuid }
+        booking_id: { type: string, format: uuid }
+        rating: { type: integer }
+        title: { type: string }
+        comment: { type: string }
+        is_verified: { type: boolean }
+        is_approved: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, customer_id, listing_id, rating, is_verified, is_approved, created_at, updated_at]
+
+    # ---- trip-dates ----
+
+    CreateTripDateRequest:
+      type: object
+      description: end_date deve ser estritamente posterior a start_date (gtfield).
+      properties:
+        listing_id: { type: string, format: uuid }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        max_capacity:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Quando omitido, cai para a capacidade do próprio listing.
+      required: [listing_id, start_date, end_date]
+
+    TripDate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        listing_id: { type: string, format: uuid }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        max_capacity: { type: integer, nullable: true }
+        current_bookings: { type: integer }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, listing_id, start_date, end_date, current_bookings, is_active, created_at, updated_at]
