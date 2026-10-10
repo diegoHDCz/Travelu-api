@@ -31,5 +31,19 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+.DS_Store
 
 docs/feat/*
+
+# Build artifacts (make build, build-lambda, build-migrate)
+dist/
+
+# Terraform
+deploy/terraform/.terraform/
+deploy/terraform/*.tfstate
+deploy/terraform/*.tfstate.*
+deploy/terraform/*.tfvars
+!deploy/terraform/*.tfvars.example
+deploy/terraform/crash.log
+
+.claude

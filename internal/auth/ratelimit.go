@@ -20,6 +20,12 @@ type visitor struct {
 // IPRateLimiter throttles requests per client IP using an in-memory token
 // bucket per visitor. Meant for low-volume, abuse-prone routes like login
 // and register, not as a general-purpose rate limiter.
+//
+// Behind Lambda this is a best-effort second layer, not the real control:
+// each concurrent execution environment holds its own visitors map, so the
+// limit is per-instance, not global across the deployment. The actual
+// shared-state rate limiting lives in API Gateway throttling + the WAF
+// rate-based rule (see the Terraform under deploy/terraform).
 type IPRateLimiter struct {
 	mu         sync.Mutex
 	visitors   map[string]*visitor
@@ -30,8 +36,13 @@ type IPRateLimiter struct {
 
 // NewIPRateLimiter builds a limiter allowing rps requests per second (with
 // burst) per IP. When trustProxy is true, the client IP is read from
-// X-Forwarded-For (as set by Caddy); otherwise it is read from the raw
-// connection, since a spoofed header would otherwise defeat the limiter.
+// X-Forwarded-For (as set by a trusted reverse proxy, e.g. Caddy in the old
+// systemd deploy); otherwise it is read from the raw connection, since a
+// spoofed header would otherwise defeat the limiter. Behind Lambda,
+// trustProxy stays false: httpadapter already sets r.RemoteAddr from API
+// Gateway's own request metadata (not a client-supplied header), and
+// net.SplitHostPort's failure on a bare IP falls through to returning it
+// as-is below.
 func NewIPRateLimiter(rps float64, burst int, trustProxy bool) *IPRateLimiter {
 	return &IPRateLimiter{
 		visitors:   make(map[string]*visitor),

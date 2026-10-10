@@ -1,5 +1,7 @@
-// Command api is the travelu-api HTTP server: a single monolithic binary
-// wiring config, database, migrations, domains and the HTTP server by hand.
+// Command api is the travelu-api standalone HTTP server, for local
+// development: it wires config, database, migrations and the shared
+// handler from internal/platform/wiring by hand, with graceful shutdown.
+// Production runs internal/platform/wiring behind cmd/lambda instead.
 package main
 
 import (
@@ -15,30 +17,18 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/diegoczajka/travelu-api/internal/auth"
-	"github.com/diegoczajka/travelu-api/internal/booking"
-	"github.com/diegoczajka/travelu-api/internal/category"
 	"github.com/diegoczajka/travelu-api/internal/config"
-	"github.com/diegoczajka/travelu-api/internal/listing"
-	"github.com/diegoczajka/travelu-api/internal/platform/apidocs"
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
-	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
-	"github.com/diegoczajka/travelu-api/internal/review"
-	"github.com/diegoczajka/travelu-api/internal/tripdate"
-	"github.com/diegoczajka/travelu-api/internal/user"
+	"github.com/diegoczajka/travelu-api/internal/platform/wiring"
 )
 
 // version is overwritten at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
 const (
-	maxRequestBody    = 1 << 20 // 1 MB
 	shutdownTimeout   = 15 * time.Second
 	migrationsTimeout = 30 * time.Second
-	healthPingTimeout = 2 * time.Second
-	loginRatePerSec   = 1.0
-	loginRateBurst    = 5
 )
 
 func main() {
@@ -54,7 +44,7 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	logger := newLogger(cfg)
+	logger := wiring.NewLogger(cfg)
 	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -75,7 +65,7 @@ func run() error {
 		return err
 	}
 
-	handler := buildHandler(cfg, logger, db)
+	handler := wiring.BuildHandler(cfg, logger, db, version)
 
 	server := &http.Server{
 		Addr:              listenAddr(cfg),
@@ -99,84 +89,9 @@ func runMigrations(ctx context.Context, db *sqlx.DB) error {
 	return nil
 }
 
-// buildHandler wires every domain by hand and returns the fully
-// middleware-wrapped HTTP handler.
-func buildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB) http.Handler {
-	userRepo := user.NewMySQLRepository(db)
-	userService := user.NewService(userRepo)
-
-	refreshTokenRepo := auth.NewMySQLRefreshTokenRepository(db)
-	tokenManager := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
-	authService := auth.NewService(userService, refreshTokenRepo, tokenManager, cfg.RefreshTokenTTL)
-	authHandler := auth.NewHandler(authService)
-
-	registerLimiter := auth.NewIPRateLimiter(loginRatePerSec, loginRateBurst, cfg.TrustProxy)
-	loginLimiter := auth.NewIPRateLimiter(loginRatePerSec, loginRateBurst, cfg.TrustProxy)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler(db))
-	apidocs.RegisterRoutes(mux)
-	mux.Handle("POST /api/v1/auth/register", registerLimiter.Middleware()(http.HandlerFunc(authHandler.Register)))
-	mux.Handle("POST /api/v1/auth/login", loginLimiter.Middleware()(http.HandlerFunc(authHandler.Login)))
-	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.Refresh)
-	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
-	mux.Handle("GET /api/v1/users/me", auth.RequireAuth(tokenManager)(http.HandlerFunc(authHandler.Me)))
-
-	requireAuth := auth.RequireAuth(tokenManager)
-
-	categoryRepo := category.NewMySQLRepository(db)
-	categoryService := category.NewService(categoryRepo)
-	category.NewHandler(categoryService).RegisterRoutes(mux, requireAuth)
-
-	bookingRepo := booking.NewMySQLRepository(db)
-	bookingService := booking.NewService(bookingRepo)
-	booking.NewHandler(bookingService).RegisterRoutes(mux, requireAuth)
-
-	listingRepo := listing.NewMySQLRepository(db)
-	listingService := listing.NewService(listingRepo)
-	listing.NewHandler(listingService).RegisterRoutes(mux, requireAuth)
-
-	reviewRepo := review.NewMySQLRepository(db)
-	reviewService := review.NewService(reviewRepo)
-	review.NewHandler(reviewService).RegisterRoutes(mux, requireAuth)
-
-	tripDateRepo := tripdate.NewMySQLRepository(db)
-	tripDateService := tripdate.NewService(tripDateRepo)
-	tripdate.NewHandler(tripDateService).RegisterRoutes(mux, requireAuth)
-
-	return httpx.Chain(mux,
-		httpx.Recover(),
-		httpx.RequestID(),
-		httpx.AccessLog(logger),
-		httpx.CORS(cfg.CORSAllowedOrigins),
-		httpx.MaxBodyBytes(maxRequestBody),
-	)
-}
-
-// healthHandler is used by the deploy process to decide whether to roll
-// back: it pings the database and reports 503 if that fails.
-func healthHandler(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), healthPingTimeout)
-		defer cancel()
-
-		if err := db.PingContext(ctx); err != nil {
-			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"status":  "unavailable",
-				"version": version,
-			})
-			return
-		}
-
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{
-			"status":  "ok",
-			"version": version,
-		})
-	}
-}
-
 // listenAddr binds to localhost only in production, since Caddy is the only
-// intended entry point and runs on the same host.
+// intended entry point and runs on the same host. Only cmd/api binds like
+// this; cmd/lambda never opens a socket.
 func listenAddr(cfg config.Config) string {
 	host := "0.0.0.0"
 	if cfg.IsProduction() {
@@ -212,25 +127,4 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, cfg co
 
 	logger.Info("server stopped")
 	return nil
-}
-
-func newLogger(cfg config.Config) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: parseLogLevel(cfg.LogLevel)}
-
-	var handler slog.Handler
-	if cfg.IsProduction() {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	}
-
-	return slog.New(handler)
-}
-
-func parseLogLevel(s string) slog.Level {
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(s)); err != nil {
-		return slog.LevelInfo
-	}
-	return level
 }

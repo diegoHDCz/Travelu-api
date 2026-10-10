@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (gitignored) and fill in, or export as
+# TF_VAR_jwt_secret etc. Never commit the real values.
+
+jwt_secret           = "generate-with-openssl-rand-base64-48-at-least-32-bytes"
+cors_allowed_origins = "https://example.com"
+
+# Uncomment to get emailed when a CloudWatch alarm fires (Fase 4).
+# alarm_notification_email = "you@example.com"

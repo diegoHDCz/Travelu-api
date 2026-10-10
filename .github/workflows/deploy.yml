@@ -1,0 +1,88 @@
+name: Deploy
+
+# Runs only after CI has gone green on main — never deploys untested code.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+# Function names follow the Terraform default naming
+# (${project_name}-${environment}-*, see deploy/terraform/variables.tf) —
+# update these if project_name/environment are overridden there.
+env:
+  LAMBDA_API_FUNCTION_NAME: travelu-api-production-api
+  LAMBDA_MIGRATE_FUNCTION_NAME: travelu-api-production-migrate
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # for aws-actions/configure-aws-credentials OIDC role assumption
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build deploy artifacts
+        run: make build-lambda build-migrate
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Migrations run first, against the VPC-private Aurora, via the
+      # migrate Lambda (which already has network access) — never from this
+      # runner directly, and never from the request-serving api Lambda's
+      # cold start. If this fails, the job stops before any traffic sees
+      # new code. See .claude/workload/go-refactor-deploy.md, Fase 1 item 2.
+      - name: Update migrate function code
+        run: |
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_MIGRATE_FUNCTION_NAME" \
+            --zip-file fileb://dist/migrate/migrate.zip \
+            --no-cli-pager
+          aws lambda wait function-updated --function-name "$LAMBDA_MIGRATE_FUNCTION_NAME"
+
+      - name: Run migrations
+        run: |
+          aws lambda invoke \
+            --function-name "$LAMBDA_MIGRATE_FUNCTION_NAME" \
+            --invocation-type RequestResponse \
+            --cli-read-timeout 120 \
+            response.json > invoke-meta.json
+          cat response.json
+          if grep -q '"FunctionError"' invoke-meta.json; then
+            echo "migrate lambda returned an error" >&2
+            exit 1
+          fi
+          if ! grep -q '"status":"ok"' response.json; then
+            echo "migrate lambda did not report success" >&2
+            exit 1
+          fi
+
+      - name: Update api function code
+        run: |
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_API_FUNCTION_NAME" \
+            --zip-file fileb://dist/lambda/lambda.zip \
+            --no-cli-pager
+          aws lambda wait function-updated --function-name "$LAMBDA_API_FUNCTION_NAME"
+
+      # vars.API_BASE_URL is set once, by hand, to the CloudFront domain
+      # from `terraform output cloudfront_domain_name` after the first
+      # apply (Settings → Secrets and variables → Actions → Variables).
+      - name: Health check
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ vars.API_BASE_URL }}/health")
+          if [ "$status" != "200" ]; then
+            echo "health check returned $status" >&2
+            exit 1
+          fi

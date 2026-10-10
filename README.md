@@ -18,15 +18,20 @@ autenticação e validação. Sem ORM, sem framework web, sem query builder.
 ## Estrutura
 
 ```
-cmd/api/main.go              fiação manual das dependências, graceful shutdown
+cmd/
+  api/main.go                 servidor standalone p/ desenvolvimento local, graceful shutdown
+  lambda/main.go               entrypoint de produção: mesmo handler, servido via API Gateway
+  migrate/main.go               roda as migrations uma vez por deploy, empacotado como Lambda à parte
 internal/
   config/                    carregamento de configuração via env vars
   platform/
     database/                pool de conexões sqlx + helper de transação
     migrations/               migrations embutidas (go:embed) + execução no startup
     httpx/                    JSON helpers, erro padrão, middlewares genéricos
+    wiring/                   monta o handler HTTP completo; importado por cmd/api e cmd/lambda
   user/                       entidade, repositório, service e regras de negócio
   auth/                       JWT, refresh tokens, handlers de auth e GET /users/me
+deploy/terraform/             VPC, Aurora Serverless v2, RDS Proxy, Lambda, API Gateway, CloudFront+WAF
 ```
 
 > **Nota de arquitetura:** `GET /api/v1/users/me` é implementado no pacote `auth`,
@@ -49,8 +54,9 @@ set -a && source .env && set +a
 make run          # roda cmd/api; aplica as migrations automaticamente no startup
 ```
 
-O servidor sobe em `http://localhost:8080` (em desenvolvimento, escutando em todas
-as interfaces; em produção, só em `127.0.0.1`, atrás do Caddy).
+O servidor sobe em `http://localhost:8080`, escutando em todas as interfaces.
+`cmd/api` é só para desenvolvimento local — produção roda `cmd/lambda` atrás de
+API Gateway, sem bind de socket (ver "Build e deploy" abaixo).
 
 Para derrubar o banco de desenvolvimento: `make db-down`.
 
@@ -67,7 +73,7 @@ Veja `.env.example` para a lista completa com comentários. Resumo:
 | `ACCESS_TOKEN_TTL`       |     não      | validade do access token (default `15m`)                                |
 | `REFRESH_TOKEN_TTL`      |     não      | validade do refresh token (default `720h`, 30 dias)                     |
 | `CORS_ALLOWED_ORIGINS`   |     não      | origens permitidas, separadas por vírgula; vazio desabilita CORS        |
-| `TRUST_PROXY`            |     não      | `true` só quando atrás do Caddy; habilita leitura de `X-Forwarded-For`  |
+| `TRUST_PROXY`            |     não      | `true` só atrás de um proxy reverso confiável; habilita leitura de `X-Forwarded-For`. Em produção (Lambda) fica `false` — API Gateway já preenche o IP de origem direto, não via header |
 | `LOG_LEVEL`              |     não      | `debug`, `info` (default), `warn` ou `error`                            |
 
 ## Endpoints
@@ -163,10 +169,23 @@ Os testes de repositório (`internal/user` e `internal/auth`) usam `t.Skip` quan
 ## Build e deploy
 
 ```bash
-make build   # CGO_ENABLED=0 GOOS=linux GOARCH=arm64, saída em dist/api
+make build           # cmd/api, p/ rodar localmente — CGO_ENABLED=0 GOOS=linux GOARCH=arm64, saída em dist/api
+make build-lambda    # cmd/lambda empacotado como dist/lambda/lambda.zip (bootstrap + zip)
+make build-migrate   # cmd/migrate empacotado como dist/migrate/migrate.zip
 ```
 
-Em produção: binário estático rodando via `systemd` numa VM Linux ARM64, atrás do
-Caddy (proxy reverso com HTTPS). A aplicação escuta apenas em `127.0.0.1` quando
-`APP_ENV=production`, já que só o Caddy deve acessá-la. `GET /health` é o endpoint
-usado pelo pipeline de deploy para decidir um rollback.
+Produção: AWS Lambda (arm64, `provided.al2023`) atrás de API Gateway HTTP API,
+com CloudFront + WAF na frente (WAF não se conecta direto em HTTP API — só em
+REST API/ALB/CloudFront) e Aurora Serverless v2 + RDS Proxy como banco. Infra
+em `deploy/terraform/` (ver `deploy/terraform/README.md`). `cmd/api`/systemd/
+Caddy continuam existindo só para desenvolvimento local.
+
+As migrations não rodam mais no cold start do Lambda que serve requisições
+(`cmd/lambda`) — rodar toda invocação concorrente seria lento e goose não
+garante segurança contra migrations concorrentes. Em vez disso, `cmd/migrate`
+é empacotado como uma Lambda própria, invocada uma vez por deploy antes do
+tráfego apontar para o código novo. `GET /health` continua existindo e é o que
+o pipeline de deploy verifica (via CloudFront) depois de atualizar o código.
+
+O raciocínio completo por trás de cada decisão de infraestrutura está em
+`.claude/workload/go-refactor-deploy.md`.
