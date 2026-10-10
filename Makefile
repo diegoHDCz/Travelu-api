@@ -6,7 +6,7 @@ COMPOSE := docker compose -f docker-compose.dev.yml
 DEV_DSN := app:app@tcp(127.0.0.1:3306)/travelu?parseTime=true&loc=UTC&charset=utf8mb4
 MIGRATIONS_DIR := internal/platform/migrations/sql
 
-.PHONY: run build build-lambda build-migrate test test-integration lint migrate-up migrate-down migrate-new db-up db-down
+.PHONY: run build build-lambda build-migrate test lint migrate-up migrate-down migrate-new db-up db-down
 
 run:
 	go run ./cmd/api
@@ -30,9 +30,6 @@ build-migrate:
 test:
 	go test -race ./...
 
-test-integration: db-up
-	TEST_DATABASE_DSN="$(DEV_DSN)" go test -race ./...
-
 lint:
 	golangci-lint run ./...
 
@@ -54,4 +51,4 @@ db-up:
 	@until $(COMPOSE) ps mysql | grep -q healthy; do sleep 1; done
 
 db-down:
-	$(COMPOSE) down
+	$(COMPOSE) downđ

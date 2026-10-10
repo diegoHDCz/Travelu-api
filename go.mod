@@ -3,6 +3,7 @@ module github.com/diegoczajka/travelu-api
 go 1.27.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/caarlos0/env/v11 v11.4.1

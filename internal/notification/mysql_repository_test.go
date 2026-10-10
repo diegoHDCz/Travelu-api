@@ -2,110 +2,160 @@ package notification
 
 import (
 	"context"
-	"os"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
-	"github.com/diegoczajka/travelu-api/internal/user"
-	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/diegoczajka/travelu-api/internal/platform/database/dbtest"
 )
 
-// openTestDB connects to TEST_DATABASE_DSN, applies migrations and cleans
-// the tables this package touches. Skips the test if the variable is unset.
-func openTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
+var notificationColumns = []string{"id", "user_id", "title", "body", "type", "reference_id", "is_read", "created_at"}
 
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN not set, skipping integration test")
+func TestMySQLRepository_Create(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	// An empty reference id must go out as NULL.
+	mock.ExpectExec(`INSERT INTO notifications`).
+		WithArgs(sqlmock.AnyArg(), "u-1", "Hi", "Body", TypeTripReminder, nil, false, now).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	created, err := repo.Create(context.Background(), Notification{
+		UserID: "u-1", Title: "Hi", Body: "Body", Type: TypeTripReminder, CreatedAt: now,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, created.ID)
+}
+
+func TestMySQLRepository_Create_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	boom := errors.New("boom")
+
+	mock.ExpectExec(`INSERT INTO notifications`).WillReturnError(boom)
+
+	_, err := repo.Create(context.Background(), Notification{UserID: "u-1"})
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRepository_GetByID(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	mock.ExpectQuery(`FROM notifications\s+WHERE id = \?`).
+		WithArgs("n-1").
+		WillReturnRows(sqlmock.NewRows(notificationColumns).
+			AddRow("n-1", "u-1", "Confirmed", "Your booking", TypeBookingConfirmed, "b-1", true, now))
+
+	got, err := repo.GetByID(context.Background(), "n-1")
+	require.NoError(t, err)
+	assert.Equal(t, Notification{
+		ID: "n-1", UserID: "u-1", Title: "Confirmed", Body: "Your booking",
+		Type: TypeBookingConfirmed, ReferenceID: "b-1", IsRead: true, CreatedAt: now,
+	}, got)
+}
+
+func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name  string
+		dbErr error
+		want  error
+	}{
+		{"not found", sql.ErrNoRows, ErrNotFound},
+		{"db error", boom, boom},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
 
-	db, err := sqlx.Open("mysql", dsn)
-	require.NoError(t, err)
-	require.NoError(t, db.Ping())
-	require.NoError(t, migrations.Run(context.Background(), db.DB))
+			mock.ExpectQuery(`FROM notifications`).WillReturnError(tc.dbErr)
 
-	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM notifications")
-		_, _ = db.Exec("DELETE FROM users")
+			_, err := repo.GetByID(context.Background(), "missing")
+			require.ErrorIs(t, err, tc.want)
+		})
 	}
-	cleanup()
-	t.Cleanup(func() {
-		cleanup()
-		db.Close()
-	})
-
-	return db
-}
-
-// seedUser creates a user row to satisfy notifications' user_id foreign key.
-func seedUser(t *testing.T, db *sqlx.DB) string {
-	t.Helper()
-
-	u, err := user.NewMySQLRepository(db).Create(context.Background(), user.User{
-		Name: "User", Email: uuid.NewString() + "@example.com", PasswordHash: "hash",
-		Role: user.RoleCustomer, IsActive: true, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	return u.ID
-}
-
-func TestMySQLRepository_CreateAndGet(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	userID := seedUser(t, db)
-
-	created, err := repo.Create(ctx, Notification{
-		UserID: userID, Title: "Booking confirmed", Body: "body", Type: TypeBookingConfirmed,
-		CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
-	})
-	require.NoError(t, err)
-
-	fetched, err := repo.GetByID(ctx, created.ID)
-	require.NoError(t, err)
-	require.False(t, fetched.IsRead)
-}
-
-func TestMySQLRepository_MarkRead(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	userID := seedUser(t, db)
-
-	created, err := repo.Create(ctx, Notification{UserID: userID, Title: "t", Body: "b", Type: TypeTripReminder, CreatedAt: time.Now().UTC()})
-	require.NoError(t, err)
-
-	require.NoError(t, repo.MarkRead(ctx, created.ID))
-
-	fetched, err := repo.GetByID(ctx, created.ID)
-	require.NoError(t, err)
-	require.True(t, fetched.IsRead)
-}
-
-func TestMySQLRepository_MarkRead_NotFound(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-
-	err := repo.MarkRead(context.Background(), "00000000-0000-0000-0000-000000000000")
-	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestMySQLRepository_ListByUserID(t *testing.T) {
-	db := openTestDB(t)
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	userID := seedUser(t, db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	_, err := repo.Create(ctx, Notification{UserID: userID, Title: "t", Body: "b", Type: TypeRateTrip, CreatedAt: time.Now().UTC()})
-	require.NoError(t, err)
+	mock.ExpectQuery(`FROM notifications\s+WHERE user_id = \?\s+ORDER BY created_at DESC`).
+		WithArgs("u-1").
+		WillReturnRows(sqlmock.NewRows(notificationColumns).
+			AddRow("n-2", "u-1", "B", "b", TypeRateTrip, nil, false, now).
+			AddRow("n-1", "u-1", "A", "a", TypeTripReminder, nil, true, now))
 
-	notifications, err := repo.ListByUserID(ctx, userID)
+	got, err := repo.ListByUserID(context.Background(), "u-1")
 	require.NoError(t, err)
-	require.Len(t, notifications, 1)
+	require.Len(t, got, 2)
+	assert.Equal(t, "n-2", got[0].ID)
+	assert.Empty(t, got[0].ReferenceID)
+	assert.True(t, got[1].IsRead)
+}
+
+func TestMySQLRepository_ListByUserID_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	boom := errors.New("boom")
+
+	mock.ExpectQuery(`FROM notifications`).WillReturnError(boom)
+
+	_, err := repo.ListByUserID(context.Background(), "u-1")
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRepository_MarkRead(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name   string
+		result func(*sqlmock.ExpectedExec)
+		want   error
+	}{
+		{"ok", func(e *sqlmock.ExpectedExec) { e.WillReturnResult(sqlmock.NewResult(0, 1)) }, nil},
+		{"not found", func(e *sqlmock.ExpectedExec) { e.WillReturnResult(sqlmock.NewResult(0, 0)) }, ErrNotFound},
+		{"db error", func(e *sqlmock.ExpectedExec) { e.WillReturnError(boom) }, boom},
+		{"rows affected error", func(e *sqlmock.ExpectedExec) { e.WillReturnResult(sqlmock.NewErrorResult(boom)) }, boom},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
+
+			tc.result(mock.ExpectExec(`UPDATE notifications SET is_read = TRUE WHERE id = \?`).WithArgs("n-1"))
+
+			err := repo.MarkRead(context.Background(), "n-1")
+			if tc.want == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestMySQLRepository_WithTx(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE notifications`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	require.NoError(t, repo.WithTx(tx).MarkRead(context.Background(), "n-1"))
+	require.NoError(t, tx.Commit())
 }

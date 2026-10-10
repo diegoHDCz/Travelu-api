@@ -159,12 +159,13 @@ dificultar força bruta.
 ## Testes
 
 ```bash
-make test              # testes unitários e de handlers (go test -race ./...)
-make test-integration  # sobe o MySQL de dev e roda os mesmos testes com TEST_DATABASE_DSN
+make test   # todos os testes (go test -race ./...)
 ```
 
-Os testes de repositório (`internal/user` e `internal/auth`) usam `t.Skip` quando
-`TEST_DATABASE_DSN` não está definida, então `make test` funciona sem banco algum.
+Nenhum teste usa banco de dados. Services são testados com um `fakeRepository`
+em memória e os repositórios MySQL com [go-sqlmock](https://github.com/DATA-DOG/go-sqlmock)
+via `internal/platform/database/dbtest`, que valida o SQL enviado, os argumentos
+e o mapeamento de linhas/erros (`sql.ErrNoRows`, ER_DUP_ENTRY).
 
 ## Build e deploy
 

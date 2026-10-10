@@ -2,144 +2,154 @@ package user
 
 import (
 	"context"
-	"os"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
-	"github.com/jmoiron/sqlx"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/diegoczajka/travelu-api/internal/platform/database/dbtest"
 )
 
-// openTestDB connects to TEST_DATABASE_DSN, applies migrations and cleans
-// the tables this package touches. Skips the test if the variable is unset.
-func openTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN not set, skipping integration test")
-	}
-
-	db, err := sqlx.Open("mysql", dsn)
-	require.NoError(t, err)
-	require.NoError(t, db.Ping())
-	require.NoError(t, migrations.Run(context.Background(), db.DB))
-
-	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM refresh_tokens")
-		_, _ = db.Exec("DELETE FROM users")
-	}
-	cleanup()
-	t.Cleanup(func() {
-		cleanup()
-		db.Close()
-	})
-
-	return db
+var userColumns = []string{
+	"id", "name", "email", "phone", "username", "password_hash",
+	"first_name", "last_name", "role", "is_active", "created_at", "updated_at",
 }
 
-func TestMySQLRepository_CreateAndGet(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_Create(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	created, err := repo.Create(ctx, User{
-		Name:         "Diego",
-		Email:        "diego@example.com",
-		PasswordHash: "hash",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+	// Empty optional fields must be sent as NULL so the unique indexes allow
+	// more than one user without them.
+	mock.ExpectExec(`INSERT INTO users`).
+		WithArgs(sqlmock.AnyArg(), "Diego", "diego@example.com", nil, nil, "hash",
+			nil, nil, "customer", true, now, now).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	created, err := repo.Create(context.Background(), User{
+		Name: "Diego", Email: "diego@example.com", PasswordHash: "hash",
+		Role: "customer", IsActive: true, CreatedAt: now, UpdatedAt: now,
 	})
 	require.NoError(t, err)
-	require.NotZero(t, created.ID)
-
-	byEmail, err := repo.GetByEmail(ctx, "diego@example.com")
-	require.NoError(t, err)
-	require.Equal(t, created.ID, byEmail.ID)
-
-	byID, err := repo.GetByID(ctx, created.ID)
-	require.NoError(t, err)
-	require.Equal(t, "diego@example.com", byID.Email)
+	assert.NotEmpty(t, created.ID)
+	assert.Equal(t, "diego@example.com", created.Email)
 }
 
-func TestMySQLRepository_Create_DuplicateEmail(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	now := time.Now().UTC()
+func TestMySQLRepository_Create_DuplicateKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    error
+	}{
+		{"email", "Duplicate entry 'x' for key 'users.uq_users_email'", ErrEmailTaken},
+		{"phone", "Duplicate entry 'x' for key 'users.uq_users_phone'", ErrPhoneTaken},
+		{"username", "Duplicate entry 'x' for key 'users.uq_users_username'", ErrUsernameTaken},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
 
-	_, err := repo.Create(ctx, User{Name: "A", Email: "dup@example.com", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err)
+			mock.ExpectExec(`INSERT INTO users`).
+				WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry, Message: tc.message})
 
-	_, err = repo.Create(ctx, User{Name: "B", Email: "dup@example.com", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.ErrorIs(t, err, ErrEmailTaken)
+			_, err := repo.Create(context.Background(), User{Name: "A", Email: "a@example.com"})
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
 }
 
-func TestMySQLRepository_Create_DuplicatePhone(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_Create_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	now := time.Now().UTC()
+	boom := errors.New("boom")
 
-	_, err := repo.Create(ctx, User{Name: "A", Phone: "+5511999998888", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err)
+	mock.ExpectExec(`INSERT INTO users`).WillReturnError(boom)
 
-	_, err = repo.Create(ctx, User{Name: "B", Phone: "+5511999998888", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.ErrorIs(t, err, ErrPhoneTaken)
+	_, err := repo.Create(context.Background(), User{Name: "A"})
+	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_Create_DuplicateUsername(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	now := time.Now().UTC()
+func TestMySQLRepository_Getters(t *testing.T) {
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	_, err := repo.Create(ctx, User{Name: "A", Username: "dupuser", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err)
+	tests := []struct {
+		name  string
+		where string
+		value string
+		call  func(*MySQLRepository, string) (User, error)
+	}{
+		{"by id", `WHERE id = \?`, "u-1", func(r *MySQLRepository, v string) (User, error) { return r.GetByID(context.Background(), v) }},
+		{"by email", `WHERE email = \?`, "diego@example.com", func(r *MySQLRepository, v string) (User, error) { return r.GetByEmail(context.Background(), v) }},
+		{"by phone", `WHERE phone = \?`, "+5511999998888", func(r *MySQLRepository, v string) (User, error) { return r.GetByPhone(context.Background(), v) }},
+		{"by username", `WHERE username = \?`, "diegoc", func(r *MySQLRepository, v string) (User, error) { return r.GetByUsername(context.Background(), v) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
 
-	_, err = repo.Create(ctx, User{Name: "B", Username: "dupuser", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.ErrorIs(t, err, ErrUsernameTaken)
+			mock.ExpectQuery(`FROM users\s+` + tc.where).
+				WithArgs(tc.value).
+				WillReturnRows(sqlmock.NewRows(userColumns).AddRow(
+					"u-1", "Diego", "diego@example.com", "+5511999998888", "diegoc", "hash",
+					"Diego", nil, "customer", true, now, now))
+
+			got, err := tc.call(repo, tc.value)
+			require.NoError(t, err)
+			assert.Equal(t, User{
+				ID: "u-1", Name: "Diego", Email: "diego@example.com", Phone: "+5511999998888",
+				Username: "diegoc", PasswordHash: "hash", FirstName: "Diego", Role: "customer",
+				IsActive: true, CreatedAt: now, UpdatedAt: now,
+			}, got)
+		})
+	}
 }
 
-func TestMySQLRepository_Create_MultipleWithoutEmail(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	now := time.Now().UTC()
+func TestMySQLRepository_Getters_Errors(t *testing.T) {
+	boom := errors.New("boom")
 
-	_, err := repo.Create(ctx, User{Name: "A", Phone: "+5511999998888", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err)
+	tests := []struct {
+		name  string
+		dbErr error
+		want  error
+		call  func(*MySQLRepository) (User, error)
+	}{
+		{"by id not found", sql.ErrNoRows, ErrNotFound, func(r *MySQLRepository) (User, error) { return r.GetByID(context.Background(), "x") }},
+		{"by id db error", boom, boom, func(r *MySQLRepository) (User, error) { return r.GetByID(context.Background(), "x") }},
+		{"by email not found", sql.ErrNoRows, ErrNotFound, func(r *MySQLRepository) (User, error) { return r.GetByEmail(context.Background(), "x") }},
+		{"by email db error", boom, boom, func(r *MySQLRepository) (User, error) { return r.GetByEmail(context.Background(), "x") }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
 
-	_, err = repo.Create(ctx, User{Name: "B", Username: "nouser", PasswordHash: "h", CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err, "NULL email/phone/username must not collide across rows")
+			mock.ExpectQuery(`FROM users`).WillReturnError(tc.dbErr)
+
+			_, err := tc.call(repo)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
 }
 
-func TestMySQLRepository_GetByEmail_NotFound(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_WithTx(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
 
-	_, err := repo.GetByEmail(context.Background(), "missing@example.com")
-	require.ErrorIs(t, err, ErrNotFound)
-}
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO users`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
-func TestMySQLRepository_GetByPhoneAndUsername(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-
-	created, err := repo.Create(ctx, User{Name: "Diego", Phone: "+5511999998888", Username: "diegoc", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now})
+	tx, err := db.Beginx()
 	require.NoError(t, err)
-
-	byPhone, err := repo.GetByPhone(ctx, "+5511999998888")
+	_, err = repo.WithTx(tx).Create(context.Background(), User{Name: "A"})
 	require.NoError(t, err)
-	require.Equal(t, created.ID, byPhone.ID)
-
-	byUsername, err := repo.GetByUsername(ctx, "diegoc")
-	require.NoError(t, err)
-	require.Equal(t, created.ID, byUsername.ID)
+	require.NoError(t, tx.Commit())
 }

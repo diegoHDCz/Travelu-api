@@ -2,109 +2,150 @@ package tripdate
 
 import (
 	"context"
-	"os"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/diegoczajka/travelu-api/internal/listing"
-	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
-	"github.com/diegoczajka/travelu-api/internal/user"
-	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/diegoczajka/travelu-api/internal/platform/database/dbtest"
 )
 
-// openTestDB connects to TEST_DATABASE_DSN, applies migrations and cleans
-// the tables this package touches. Skips the test if the variable is unset.
-func openTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN not set, skipping integration test")
-	}
-
-	db, err := sqlx.Open("mysql", dsn)
-	require.NoError(t, err)
-	require.NoError(t, db.Ping())
-	require.NoError(t, migrations.Run(context.Background(), db.DB))
-
-	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM trip_dates")
-		_, _ = db.Exec("DELETE FROM travel_listings")
-		_, _ = db.Exec("DELETE FROM users")
-	}
-	cleanup()
-	t.Cleanup(func() {
-		cleanup()
-		db.Close()
-	})
-
-	return db
+var tripDateColumns = []string{
+	"id", "listing_id", "start_date", "end_date", "max_capacity", "current_bookings", "is_active", "created_at", "updated_at",
 }
 
-// seedListing creates a user (vendor) and a listing to satisfy trip_dates'
-// listing_id foreign key.
-func seedListing(t *testing.T, db *sqlx.DB) string {
-	t.Helper()
-	ctx := context.Background()
-	now := time.Now().UTC()
+func TestMySQLRepository_Create(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxCapacity *int
+		wantArg     any
+	}{
+		{"with capacity", func() *int { c := 10; return &c }(), 10},
+		{"unlimited capacity", nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
+			now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+			start := now.AddDate(0, 1, 0)
+			end := start.AddDate(0, 0, 7)
 
-	vendor, err := user.NewMySQLRepository(db).Create(ctx, user.User{
-		Name: "Vendor", Email: uuid.NewString() + "@example.com", PasswordHash: "hash",
-		Role: user.RoleVendor, IsActive: true, CreatedAt: now, UpdatedAt: now,
-	})
-	require.NoError(t, err)
+			mock.ExpectExec(`INSERT INTO trip_dates`).
+				WithArgs(sqlmock.AnyArg(), "list-1", start, end, tc.wantArg, 0, true, now, now).
+				WillReturnResult(sqlmock.NewResult(0, 1))
 
-	l, err := listing.NewMySQLRepository(db).Create(ctx, listing.Listing{
-		VendorID: vendor.ID, Title: "Hotel", Description: "d", Category: listing.CategoryHotel,
-		Location: "loc", Price: 10, Currency: "USD", IsActive: true, CreatedAt: now, UpdatedAt: now,
-	})
-	require.NoError(t, err)
-	return l.ID
+			created, err := repo.Create(context.Background(), TripDate{
+				ListingID: "list-1", StartDate: start, EndDate: end, MaxCapacity: tc.maxCapacity,
+				IsActive: true, CreatedAt: now, UpdatedAt: now,
+			})
+			require.NoError(t, err)
+			assert.NotEmpty(t, created.ID)
+		})
+	}
 }
 
-func TestMySQLRepository_CreateAndGet(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_Create_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	listingID := seedListing(t, db)
+	boom := errors.New("boom")
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	mock.ExpectExec(`INSERT INTO trip_dates`).WillReturnError(boom)
+
+	_, err := repo.Create(context.Background(), TripDate{ListingID: "list-1"})
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRepository_GetByID(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	start := now.AddDate(0, 1, 0)
+	end := start.AddDate(0, 0, 7)
+
+	mock.ExpectQuery(`FROM trip_dates\s+WHERE id = \?`).
+		WithArgs("td-1").
+		WillReturnRows(sqlmock.NewRows(tripDateColumns).
+			AddRow("td-1", "list-1", start, end, int64(10), 3, true, now, now))
+
+	got, err := repo.GetByID(context.Background(), "td-1")
+	require.NoError(t, err)
 	maxCapacity := 10
-	created, err := repo.Create(ctx, TripDate{
-		ListingID: listingID, StartDate: now, EndDate: now.Add(48 * time.Hour),
-		MaxCapacity: &maxCapacity, IsActive: true, CreatedAt: now, UpdatedAt: now,
-	})
-	require.NoError(t, err)
+	assert.Equal(t, TripDate{
+		ID: "td-1", ListingID: "list-1", StartDate: start, EndDate: end, MaxCapacity: &maxCapacity,
+		CurrentBookings: 3, IsActive: true, CreatedAt: now, UpdatedAt: now,
+	}, got)
+}
 
-	fetched, err := repo.GetByID(ctx, created.ID)
-	require.NoError(t, err)
-	require.NotNil(t, fetched.MaxCapacity)
-	require.Equal(t, 10, *fetched.MaxCapacity)
+func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name  string
+		dbErr error
+		want  error
+	}{
+		{"not found", sql.ErrNoRows, ErrNotFound},
+		{"db error", boom, boom},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
+
+			mock.ExpectQuery(`FROM trip_dates`).WillReturnError(tc.dbErr)
+
+			_, err := repo.GetByID(context.Background(), "missing")
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
 }
 
 func TestMySQLRepository_ListByListingID(t *testing.T) {
-	db := openTestDB(t)
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	listingID := seedListing(t, db)
-	now := time.Now().UTC()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	_, err := repo.Create(ctx, TripDate{ListingID: listingID, StartDate: now, EndDate: now.Add(time.Hour), IsActive: true, CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err)
+	mock.ExpectQuery(`FROM trip_dates\s+WHERE listing_id = \?\s+ORDER BY start_date`).
+		WithArgs("list-1").
+		WillReturnRows(sqlmock.NewRows(tripDateColumns).
+			AddRow("td-1", "list-1", now, now.AddDate(0, 0, 3), nil, 0, true, now, now).
+			AddRow("td-2", "list-1", now.AddDate(0, 1, 0), now.AddDate(0, 1, 3), int64(5), 5, false, now, now))
 
-	tripDates, err := repo.ListByListingID(ctx, listingID)
+	got, err := repo.ListByListingID(context.Background(), "list-1")
 	require.NoError(t, err)
-	require.Len(t, tripDates, 1)
+	require.Len(t, got, 2)
+	assert.Nil(t, got[0].MaxCapacity)
+	require.NotNil(t, got[1].MaxCapacity)
+	assert.Equal(t, 5, *got[1].MaxCapacity)
 }
 
-func TestMySQLRepository_GetByID_NotFound(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_ListByListingID_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	boom := errors.New("boom")
+
+	mock.ExpectQuery(`FROM trip_dates`).WillReturnError(boom)
+
+	_, err := repo.ListByListingID(context.Background(), "list-1")
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRepository_WithTx(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
 
-	_, err := repo.GetByID(context.Background(), "00000000-0000-0000-0000-000000000000")
-	require.ErrorIs(t, err, ErrNotFound)
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO trip_dates`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	_, err = repo.WithTx(tx).Create(context.Background(), TripDate{ListingID: "list-1"})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
 }

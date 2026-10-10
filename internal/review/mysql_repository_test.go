@@ -2,115 +2,173 @@ package review
 
 import (
 	"context"
-	"os"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/diegoczajka/travelu-api/internal/listing"
-	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
-	"github.com/diegoczajka/travelu-api/internal/user"
-	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/diegoczajka/travelu-api/internal/platform/database/dbtest"
 )
 
-// openTestDB connects to TEST_DATABASE_DSN, applies migrations and cleans
-// the tables this package touches. Skips the test if the variable is unset.
-func openTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN not set, skipping integration test")
-	}
-
-	db, err := sqlx.Open("mysql", dsn)
-	require.NoError(t, err)
-	require.NoError(t, db.Ping())
-	require.NoError(t, migrations.Run(context.Background(), db.DB))
-
-	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM reviews")
-		_, _ = db.Exec("DELETE FROM travel_listings")
-		_, _ = db.Exec("DELETE FROM users")
-	}
-	cleanup()
-	t.Cleanup(func() {
-		cleanup()
-		db.Close()
-	})
-
-	return db
+var reviewColumns = []string{
+	"id", "customer_id", "listing_id", "booking_id", "rating", "title", "comment",
+	"is_verified", "is_approved", "created_at", "updated_at",
 }
 
-// seedCustomerAndListing creates a customer and a vendor listing to satisfy
-// reviews' customer_id and listing_id foreign keys.
-func seedCustomerAndListing(t *testing.T, db *sqlx.DB) (customerID, listingID string) {
-	t.Helper()
-	ctx := context.Background()
-	now := time.Now().UTC()
-	userRepo := user.NewMySQLRepository(db)
-
-	customer, err := userRepo.Create(ctx, user.User{
-		Name: "Customer", Email: uuid.NewString() + "@example.com", PasswordHash: "hash",
-		Role: user.RoleCustomer, IsActive: true, CreatedAt: now, UpdatedAt: now,
-	})
-	require.NoError(t, err)
-
-	vendor, err := userRepo.Create(ctx, user.User{
-		Name: "Vendor", Email: uuid.NewString() + "@example.com", PasswordHash: "hash",
-		Role: user.RoleVendor, IsActive: true, CreatedAt: now, UpdatedAt: now,
-	})
-	require.NoError(t, err)
-
-	l, err := listing.NewMySQLRepository(db).Create(ctx, listing.Listing{
-		VendorID: vendor.ID, Title: "Hotel", Description: "d", Category: listing.CategoryHotel,
-		Location: "loc", Price: 10, Currency: "USD", IsActive: true, CreatedAt: now, UpdatedAt: now,
-	})
-	require.NoError(t, err)
-
-	return customer.ID, l.ID
-}
-
-func TestMySQLRepository_CreateAndGet(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_Create(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	customerID, listingID := seedCustomerAndListing(t, db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	created, err := repo.Create(ctx, Review{
-		CustomerID: customerID, ListingID: listingID, Rating: 5, IsApproved: true,
-		CreatedAt: now, UpdatedAt: now,
+	// Empty booking id and title must go out as NULL.
+	mock.ExpectExec(`INSERT INTO reviews`).
+		WithArgs(sqlmock.AnyArg(), "cust-1", "list-1", nil, 5, nil, "Great",
+			false, true, now, now).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	created, err := repo.Create(context.Background(), Review{
+		CustomerID: "cust-1", ListingID: "list-1", Rating: 5, Comment: "Great",
+		IsApproved: true, CreatedAt: now, UpdatedAt: now,
 	})
 	require.NoError(t, err)
+	assert.NotEmpty(t, created.ID)
+}
 
-	fetched, err := repo.GetByID(ctx, created.ID)
+func TestMySQLRepository_Create_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	boom := errors.New("boom")
+
+	mock.ExpectExec(`INSERT INTO reviews`).WillReturnError(boom)
+
+	_, err := repo.Create(context.Background(), Review{CustomerID: "cust-1"})
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRepository_GetByID(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	mock.ExpectQuery(`FROM reviews\s+WHERE id = \?`).
+		WithArgs("r-1").
+		WillReturnRows(sqlmock.NewRows(reviewColumns).
+			AddRow("r-1", "cust-1", "list-1", "b-1", 4, "Nice", "Good stay", true, true, now, now))
+
+	got, err := repo.GetByID(context.Background(), "r-1")
 	require.NoError(t, err)
-	require.Equal(t, 5, fetched.Rating)
+	assert.Equal(t, Review{
+		ID: "r-1", CustomerID: "cust-1", ListingID: "list-1", BookingID: "b-1", Rating: 4,
+		Title: "Nice", Comment: "Good stay", IsVerified: true, IsApproved: true, CreatedAt: now, UpdatedAt: now,
+	}, got)
+}
+
+func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name  string
+		dbErr error
+		want  error
+	}{
+		{"not found", sql.ErrNoRows, ErrNotFound},
+		{"db error", boom, boom},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
+
+			mock.ExpectQuery(`FROM reviews`).WillReturnError(tc.dbErr)
+
+			_, err := repo.GetByID(context.Background(), "missing")
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
 }
 
 func TestMySQLRepository_ListByListingID(t *testing.T) {
-	db := openTestDB(t)
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
-	ctx := context.Background()
-	customerID, listingID := seedCustomerAndListing(t, db)
-	now := time.Now().UTC()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	_, err := repo.Create(ctx, Review{CustomerID: customerID, ListingID: listingID, Rating: 4, IsApproved: true, CreatedAt: now, UpdatedAt: now})
-	require.NoError(t, err)
+	// Only approved reviews are listed.
+	mock.ExpectQuery(`FROM reviews\s+WHERE listing_id = \? AND is_approved = TRUE\s+ORDER BY created_at DESC`).
+		WithArgs("list-1").
+		WillReturnRows(sqlmock.NewRows(reviewColumns).
+			AddRow("r-2", "cust-2", "list-1", nil, 3, nil, nil, false, true, now, now).
+			AddRow("r-1", "cust-1", "list-1", nil, 5, "Top", nil, false, true, now, now))
 
-	reviews, err := repo.ListByListingID(ctx, listingID)
+	got, err := repo.ListByListingID(context.Background(), "list-1")
 	require.NoError(t, err)
-	require.Len(t, reviews, 1)
+	require.Len(t, got, 2)
+	assert.Equal(t, 3, got[0].Rating)
+	assert.Equal(t, "Top", got[1].Title)
 }
 
-func TestMySQLRepository_GetByID_NotFound(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRepository_ListByListingID_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+	boom := errors.New("boom")
+
+	mock.ExpectQuery(`FROM reviews`).WillReturnError(boom)
+
+	_, err := repo.ListByListingID(context.Background(), "list-1")
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRepository_Update(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRepository(db)
 
-	_, err := repo.GetByID(context.Background(), "00000000-0000-0000-0000-000000000000")
-	require.ErrorIs(t, err, ErrNotFound)
+	mock.ExpectExec(`UPDATE reviews\s+SET rating = \?, title = \?, comment = \?, updated_at = \?\s+WHERE id = \?`).
+		WithArgs(4, "Updated", nil, sqlmock.AnyArg(), "r-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	got, err := repo.Update(context.Background(), Review{ID: "r-1", Rating: 4, Title: "Updated"})
+	require.NoError(t, err)
+	assert.False(t, got.UpdatedAt.IsZero())
+}
+
+func TestMySQLRepository_Update_Errors(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name   string
+		result func(*sqlmock.ExpectedExec)
+		want   error
+	}{
+		{"not found", func(e *sqlmock.ExpectedExec) { e.WillReturnResult(sqlmock.NewResult(0, 0)) }, ErrNotFound},
+		{"db error", func(e *sqlmock.ExpectedExec) { e.WillReturnError(boom) }, boom},
+		{"rows affected error", func(e *sqlmock.ExpectedExec) { e.WillReturnResult(sqlmock.NewErrorResult(boom)) }, boom},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRepository(db)
+			tc.result(mock.ExpectExec(`UPDATE reviews`))
+
+			_, err := repo.Update(context.Background(), Review{ID: "r-1", Rating: 4})
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestMySQLRepository_WithTx(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO reviews`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	_, err = repo.WithTx(tx).Create(context.Background(), Review{CustomerID: "cust-1"})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
 }

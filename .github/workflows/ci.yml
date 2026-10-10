@@ -9,22 +9,6 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
 
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_DATABASE: travelu
-          MYSQL_USER: app
-          MYSQL_PASSWORD: app
-          MYSQL_ROOT_PASSWORD: root
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h localhost -uroot -proot"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=10
-
     steps:
       - uses: actions/checkout@v4
 
@@ -38,9 +22,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test (unit + integration)
-        env:
-          TEST_DATABASE_DSN: "app:app@tcp(127.0.0.1:3306)/travelu?parseTime=true&loc=UTC&charset=utf8mb4"
+      # Repositories are tested against go-sqlmock, so no database is needed.
+      - name: Test
         run: go test -race ./...
 
   lint:

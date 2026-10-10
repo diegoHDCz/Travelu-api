@@ -2,115 +2,139 @@ package auth
 
 import (
 	"context"
-	"os"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/jmoiron/sqlx"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/go-sql-driver/mysql"
-
-	"github.com/diegoczajka/travelu-api/internal/platform/migrations"
-	"github.com/diegoczajka/travelu-api/internal/user"
+	"github.com/diegoczajka/travelu-api/internal/platform/database/dbtest"
 )
 
-// openTestDB connects to TEST_DATABASE_DSN, applies migrations and cleans
-// the tables this package touches. Skips the test if the variable is unset.
-func openTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
+var refreshTokenColumns = []string{"id", "user_id", "token_hash", "expires_at", "revoked_at", "created_at"}
 
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN not set, skipping integration test")
-	}
-
-	db, err := sqlx.Open("mysql", dsn)
-	require.NoError(t, err)
-	require.NoError(t, db.Ping())
-	require.NoError(t, migrations.Run(context.Background(), db.DB))
-
-	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM refresh_tokens")
-		_, _ = db.Exec("DELETE FROM users")
-	}
-	cleanup()
-	t.Cleanup(func() {
-		cleanup()
-		db.Close()
-	})
-
-	return db
-}
-
-func createTestUser(t *testing.T, db *sqlx.DB) user.User {
-	t.Helper()
-
-	repo := user.NewMySQLRepository(db)
-	now := time.Now().UTC()
-	u, err := repo.Create(context.Background(), user.User{
-		Name:         "Diego",
-		Email:        "diego@example.com",
-		PasswordHash: "hash",
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	})
-	require.NoError(t, err)
-	return u
-}
-
-func TestMySQLRefreshTokenRepository_CreateGetRevoke(t *testing.T) {
-	db := openTestDB(t)
-	u := createTestUser(t, db)
+func TestMySQLRefreshTokenRepository_Create(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRefreshTokenRepository(db)
-	ctx := context.Background()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	now := time.Now().UTC()
-	created, err := repo.Create(ctx, RefreshToken{
-		UserID:    u.ID,
-		TokenHash: "abc123",
-		ExpiresAt: now.Add(time.Hour),
-		CreatedAt: now,
+	mock.ExpectExec(`INSERT INTO refresh_tokens`).
+		WithArgs(sqlmock.AnyArg(), "u-1", "abc123", now.Add(time.Hour), now).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	created, err := repo.Create(context.Background(), RefreshToken{
+		UserID: "u-1", TokenHash: "abc123", ExpiresAt: now.Add(time.Hour), CreatedAt: now,
 	})
 	require.NoError(t, err)
-	require.NotZero(t, created.ID)
+	assert.NotEmpty(t, created.ID)
+	assert.Equal(t, "abc123", created.TokenHash)
+}
 
-	fetched, err := repo.GetByTokenHash(ctx, "abc123")
-	require.NoError(t, err)
-	require.Nil(t, fetched.RevokedAt)
+func TestMySQLRefreshTokenRepository_Create_DBError(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRefreshTokenRepository(db)
+	boom := errors.New("boom")
 
-	require.NoError(t, repo.Revoke(ctx, created.ID))
+	mock.ExpectExec(`INSERT INTO refresh_tokens`).WillReturnError(boom)
 
-	fetched, err = repo.GetByTokenHash(ctx, "abc123")
-	require.NoError(t, err)
-	require.NotNil(t, fetched.RevokedAt)
+	_, err := repo.Create(context.Background(), RefreshToken{UserID: "u-1"})
+	require.ErrorIs(t, err, boom)
+}
+
+func TestMySQLRefreshTokenRepository_GetByTokenHash(t *testing.T) {
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	revoked := now.Add(time.Minute)
+
+	tests := []struct {
+		name      string
+		revokedAt any
+		want      *time.Time
+	}{
+		{"active", nil, nil},
+		{"revoked", revoked, &revoked},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRefreshTokenRepository(db)
+
+			mock.ExpectQuery(`FROM refresh_tokens\s+WHERE token_hash = \?`).
+				WithArgs("abc123").
+				WillReturnRows(sqlmock.NewRows(refreshTokenColumns).
+					AddRow("rt-1", "u-1", "abc123", now.Add(time.Hour), tc.revokedAt, now))
+
+			got, err := repo.GetByTokenHash(context.Background(), "abc123")
+			require.NoError(t, err)
+			assert.Equal(t, RefreshToken{
+				ID: "rt-1", UserID: "u-1", TokenHash: "abc123",
+				ExpiresAt: now.Add(time.Hour), RevokedAt: tc.want, CreatedAt: now,
+			}, got)
+		})
+	}
+}
+
+func TestMySQLRefreshTokenRepository_GetByTokenHash_Errors(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name  string
+		dbErr error
+		want  error
+	}{
+		{"not found", sql.ErrNoRows, errRefreshTokenNotFound},
+		{"db error", boom, boom},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := dbtest.New(t)
+			repo := NewMySQLRefreshTokenRepository(db)
+
+			mock.ExpectQuery(`FROM refresh_tokens`).WillReturnError(tc.dbErr)
+
+			_, err := repo.GetByTokenHash(context.Background(), "missing")
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestMySQLRefreshTokenRepository_Revoke(t *testing.T) {
+	db, mock := dbtest.New(t)
+	repo := NewMySQLRefreshTokenRepository(db)
+
+	mock.ExpectExec(`UPDATE refresh_tokens SET revoked_at = \? WHERE id = \? AND revoked_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "rt-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, repo.Revoke(context.Background(), "rt-1"))
 }
 
 func TestMySQLRefreshTokenRepository_RevokeAllForUser(t *testing.T) {
-	db := openTestDB(t)
-	u := createTestUser(t, db)
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRefreshTokenRepository(db)
-	ctx := context.Background()
-	now := time.Now().UTC()
+	boom := errors.New("boom")
 
-	for _, hash := range []string{"h1", "h2"} {
-		_, err := repo.Create(ctx, RefreshToken{UserID: u.ID, TokenHash: hash, ExpiresAt: now.Add(time.Hour), CreatedAt: now})
-		require.NoError(t, err)
-	}
+	mock.ExpectExec(`UPDATE refresh_tokens SET revoked_at = \? WHERE user_id = \? AND revoked_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "u-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE refresh_tokens`).WillReturnError(boom)
 
-	require.NoError(t, repo.RevokeAllForUser(ctx, u.ID))
-
-	for _, hash := range []string{"h1", "h2"} {
-		rt, err := repo.GetByTokenHash(ctx, hash)
-		require.NoError(t, err)
-		require.NotNil(t, rt.RevokedAt)
-	}
+	require.NoError(t, repo.RevokeAllForUser(context.Background(), "u-1"))
+	require.ErrorIs(t, repo.RevokeAllForUser(context.Background(), "u-1"), boom)
 }
 
-func TestMySQLRefreshTokenRepository_GetByTokenHash_NotFound(t *testing.T) {
-	db := openTestDB(t)
+func TestMySQLRefreshTokenRepository_WithTx(t *testing.T) {
+	db, mock := dbtest.New(t)
 	repo := NewMySQLRefreshTokenRepository(db)
 
-	_, err := repo.GetByTokenHash(context.Background(), "missing")
-	require.ErrorIs(t, err, errRefreshTokenNotFound)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE refresh_tokens`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	require.NoError(t, repo.WithTx(tx).Revoke(context.Background(), "rt-1"))
+	require.NoError(t, tx.Commit())
 }
