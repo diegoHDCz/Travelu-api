@@ -16,7 +16,7 @@ import (
 )
 
 var userColumns = []string{
-	"id", "name", "email", "phone", "username", "password_hash",
+	"id", "name", "email", "phone", "password_hash",
 	"first_name", "last_name", "role", "is_active", "created_at", "updated_at",
 }
 
@@ -28,7 +28,7 @@ func TestMySQLRepository_Create(t *testing.T) {
 	// Empty optional fields must be sent as NULL so the unique indexes allow
 	// more than one user without them.
 	mock.ExpectExec(`INSERT INTO users`).
-		WithArgs(sqlmock.AnyArg(), "Diego", "diego@example.com", nil, nil, "hash",
+		WithArgs(sqlmock.AnyArg(), "Diego", "diego@example.com", nil, "hash",
 			nil, nil, "customer", true, now, now).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -49,7 +49,6 @@ func TestMySQLRepository_Create_DuplicateKeys(t *testing.T) {
 	}{
 		{"email", "Duplicate entry 'x' for key 'users.uq_users_email'", ErrEmailTaken},
 		{"phone", "Duplicate entry 'x' for key 'users.uq_users_phone'", ErrPhoneTaken},
-		{"username", "Duplicate entry 'x' for key 'users.uq_users_username'", ErrUsernameTaken},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,7 +87,6 @@ func TestMySQLRepository_Getters(t *testing.T) {
 		{"by id", `WHERE id = \?`, "u-1", func(r *MySQLRepository, v string) (User, error) { return r.GetByID(context.Background(), v) }},
 		{"by email", `WHERE email = \?`, "diego@example.com", func(r *MySQLRepository, v string) (User, error) { return r.GetByEmail(context.Background(), v) }},
 		{"by phone", `WHERE phone = \?`, "+5511999998888", func(r *MySQLRepository, v string) (User, error) { return r.GetByPhone(context.Background(), v) }},
-		{"by username", `WHERE username = \?`, "diegoc", func(r *MySQLRepository, v string) (User, error) { return r.GetByUsername(context.Background(), v) }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,14 +96,14 @@ func TestMySQLRepository_Getters(t *testing.T) {
 			mock.ExpectQuery(`FROM users\s+` + tc.where).
 				WithArgs(tc.value).
 				WillReturnRows(sqlmock.NewRows(userColumns).AddRow(
-					"u-1", "Diego", "diego@example.com", "+5511999998888", "diegoc", "hash",
+					"u-1", "Diego", "diego@example.com", "+5511999998888", "hash",
 					"Diego", nil, "customer", true, now, now))
 
 			got, err := tc.call(repo, tc.value)
 			require.NoError(t, err)
 			assert.Equal(t, User{
 				ID: "u-1", Name: "Diego", Email: "diego@example.com", Phone: "+5511999998888",
-				Username: "diegoc", PasswordHash: "hash", FirstName: "Diego", Role: "customer",
+				PasswordHash: "hash", FirstName: "Diego", Role: "customer",
 				IsActive: true, CreatedAt: now, UpdatedAt: now,
 			}, got)
 		})

@@ -31,12 +31,11 @@ type userResponse struct {
 	Name      string    `json:"name"`
 	Email     string    `json:"email,omitempty"`
 	Phone     string    `json:"phone,omitempty"`
-	Username  string    `json:"username,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 func newUserResponse(u user.User) userResponse {
-	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email, Phone: u.Phone, Username: u.Username, CreatedAt: u.CreatedAt}
+	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email, Phone: u.Phone, CreatedAt: u.CreatedAt}
 }
 
 // Register handles POST /api/v1/auth/register.
@@ -56,10 +55,10 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, newUserResponse(created))
 }
 
-// loginRequest.Login accepts an email, a phone number or a username — the
-// service decides which based on its shape. It is intentionally not
+// loginRequest.Login accepts an email or a phone number — the service
+// decides which based on its shape. It is intentionally not
 // validated beyond "required": a format-specific check here (e.g. "email")
-// would reject the phone/username cases.
+// would reject the phone case.
 // loginRequest.DeviceToken is the push-notification token of the device the
 // client is authenticating from. It is optional; when present, it is
 // embedded in the access token's device_token claim.

@@ -11,19 +11,17 @@ import (
 
 // fakeRepository is an in-memory Repository used by service unit tests.
 type fakeRepository struct {
-	byID       map[string]User
-	byEmail    map[string]User
-	byPhone    map[string]User
-	byUsername map[string]User
-	nextID     int64
+	byID    map[string]User
+	byEmail map[string]User
+	byPhone map[string]User
+	nextID  int64
 }
 
 func newFakeRepository() *fakeRepository {
 	return &fakeRepository{
-		byID:       map[string]User{},
-		byEmail:    map[string]User{},
-		byPhone:    map[string]User{},
-		byUsername: map[string]User{},
+		byID:    map[string]User{},
+		byEmail: map[string]User{},
+		byPhone: map[string]User{},
 	}
 }
 
@@ -38,11 +36,6 @@ func (f *fakeRepository) Create(_ context.Context, u User) (User, error) {
 			return User{}, ErrPhoneTaken
 		}
 	}
-	if u.Username != "" {
-		if _, exists := f.byUsername[u.Username]; exists {
-			return User{}, ErrUsernameTaken
-		}
-	}
 
 	f.nextID++
 	u.ID = strconv.FormatInt(f.nextID, 10)
@@ -52,9 +45,6 @@ func (f *fakeRepository) Create(_ context.Context, u User) (User, error) {
 	}
 	if u.Phone != "" {
 		f.byPhone[u.Phone] = u
-	}
-	if u.Username != "" {
-		f.byUsername[u.Username] = u
 	}
 	return u, nil
 }
@@ -69,14 +59,6 @@ func (f *fakeRepository) GetByEmail(_ context.Context, email string) (User, erro
 
 func (f *fakeRepository) GetByPhone(_ context.Context, phone string) (User, error) {
 	u, ok := f.byPhone[phone]
-	if !ok {
-		return User{}, ErrNotFound
-	}
-	return u, nil
-}
-
-func (f *fakeRepository) GetByUsername(_ context.Context, username string) (User, error) {
-	u, ok := f.byUsername[username]
 	if !ok {
 		return User{}, ErrNotFound
 	}
@@ -144,19 +126,6 @@ func TestService_Create_InvalidPhone(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPhone)
 }
 
-func TestService_Create_WithUsernameOnly(t *testing.T) {
-	svc := NewService(newFakeRepository())
-
-	created, err := svc.Create(context.Background(), CreateInput{
-		Name:     "Diego",
-		Username: "DiegoC",
-		Password: "supersecret",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "diegoc", created.Username)
-}
-
 func TestService_GetByEmail_NotFound(t *testing.T) {
 	svc := NewService(newFakeRepository())
 
@@ -168,20 +137,19 @@ func TestService_GetByLogin(t *testing.T) {
 	svc := NewService(newFakeRepository())
 	ctx := context.Background()
 
-	_, err := svc.Create(ctx, CreateInput{Name: "Diego", Email: "diego@example.com", Phone: "+5511999998888", Username: "diegoc", Password: "supersecret"})
+	_, err := svc.Create(ctx, CreateInput{Name: "Diego", Email: "diego@example.com", Phone: "+5511999998888", Password: "supersecret"})
 	require.NoError(t, err)
 
 	byEmail, err := svc.GetByLogin(ctx, "diego@example.com")
 	require.NoError(t, err)
-	assert.Equal(t, "diegoc", byEmail.Username)
+	assert.Equal(t, "+5511999998888", byEmail.Phone)
 
 	byPhone, err := svc.GetByLogin(ctx, "+55 11 99999-8888")
 	require.NoError(t, err)
-	assert.Equal(t, "diegoc", byPhone.Username)
+	assert.Equal(t, "diego@example.com", byPhone.Email)
 
-	byUsername, err := svc.GetByLogin(ctx, "diegoc")
-	require.NoError(t, err)
-	assert.Equal(t, "diego@example.com", byUsername.Email)
+	_, err = svc.GetByLogin(ctx, "diegoc")
+	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestService_GetByID_NotFound(t *testing.T) {

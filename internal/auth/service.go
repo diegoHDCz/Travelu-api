@@ -49,7 +49,7 @@ func (s *Service) Register(ctx context.Context, input user.CreateInput) (user.Us
 	return s.users.Create(ctx, input)
 }
 
-// Login verifies a login identifier (email, phone or username) plus
+// Login verifies a login identifier (email or phone) plus
 // password and issues a new token pair. deviceToken is the push-notification
 // token of the device the client is authenticating from, embedded in the
 // access token's device_token claim; pass "" if the client did not send

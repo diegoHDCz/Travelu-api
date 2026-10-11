@@ -85,7 +85,7 @@ paths:
       tags: [auth]
       summary: Autentica e emite um par de tokens
       description: >
-        `login` aceita e-mail, telefone ou username — o service decide pelo
+        `login` aceita e-mail ou telefone — o service decide pelo
         formato. Erro de credencial inválida é sempre genérico (não dá para
         descobrir se um e-mail existe). Rate-limited por IP (1 req/s, burst 5).
       security: []
@@ -678,13 +678,12 @@ components:
     RegisterRequest:
       type: object
       description: >
-        Pelo menos um de email/phone/username é obrigatório
-        (required_without_all).
+        Pelo menos um de email/phone é obrigatório
+        (required_without).
       properties:
         name: { type: string, minLength: 2, maxLength: 255 }
         email: { type: string, format: email, maxLength: 255 }
         phone: { type: string, maxLength: 20 }
-        username: { type: string, minLength: 3, maxLength: 30, pattern: "^[a-zA-Z0-9]+$" }
         password: { type: string, minLength: 8, maxLength: 72, format: password }
       required: [name, password]
 
@@ -695,14 +694,13 @@ components:
         name: { type: string }
         email: { type: string }
         phone: { type: string }
-        username: { type: string }
         created_at: { type: string, format: date-time }
       required: [id, name, created_at]
 
     LoginRequest:
       type: object
       properties:
-        login: { type: string, description: "Email, telefone ou username" }
+        login: { type: string, description: "Email ou telefone" }
         password: { type: string }
         device_token: { type: string, maxLength: 512, description: "Push token opcional, embutido no claim device_token do access token" }
       required: [login, password]
