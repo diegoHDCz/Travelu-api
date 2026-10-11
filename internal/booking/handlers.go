@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/diegoczajka/travelu-api/internal/auth"
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 )
 
@@ -27,9 +28,9 @@ func NewHandler(service *Service) BookingHandlers {
 // so callers only need to know about this one method instead of each
 // route/method/middleware combination.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, requireAuth httpx.Middleware) {
-	mux.Handle("POST /api/v1/bookings", requireAuth(http.HandlerFunc(h.Create)))
-	mux.Handle("GET /api/v1/bookings", requireAuth(http.HandlerFunc(h.ListMine)))
-	mux.Handle("GET /api/v1/bookings/{id}", requireAuth(http.HandlerFunc(h.GetByID)))
+	mux.Handle("POST /api/v1/bookings", audit.Action("booking.create", requireAuth(http.HandlerFunc(h.Create))))
+	mux.Handle("GET /api/v1/bookings", audit.Action("booking.list_mine", requireAuth(http.HandlerFunc(h.ListMine))))
+	mux.Handle("GET /api/v1/bookings/{id}", audit.Action("booking.get", requireAuth(http.HandlerFunc(h.GetByID))))
 }
 
 type bookingResponse struct {
@@ -111,6 +112,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.SetResourceID(r.Context(), created.ID)
 	httpx.WriteJSON(w, http.StatusCreated, newBookingResponse(created))
 }
 

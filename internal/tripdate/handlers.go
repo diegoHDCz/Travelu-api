@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 )
 
@@ -26,9 +27,9 @@ func NewHandler(service *Service) TripDateHandlers {
 // so callers only need to know about this one method instead of each
 // route/method/middleware combination.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, requireAuth httpx.Middleware) {
-	mux.Handle("POST /api/v1/trip-dates", requireAuth(http.HandlerFunc(h.Create)))
-	mux.Handle("GET /api/v1/trip-dates", requireAuth(http.HandlerFunc(h.List)))
-	mux.Handle("GET /api/v1/trip-dates/{id}", requireAuth(http.HandlerFunc(h.GetByID)))
+	mux.Handle("POST /api/v1/trip-dates", audit.Action("trip_date.create", requireAuth(http.HandlerFunc(h.Create))))
+	mux.Handle("GET /api/v1/trip-dates", audit.Action("trip_date.list", requireAuth(http.HandlerFunc(h.List))))
+	mux.Handle("GET /api/v1/trip-dates/{id}", audit.Action("trip_date.get", requireAuth(http.HandlerFunc(h.GetByID))))
 }
 
 type tripDateResponse struct {
@@ -83,6 +84,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.SetResourceID(r.Context(), created.ID)
 	httpx.WriteJSON(w, http.StatusCreated, newTripDateResponse(created))
 }
 

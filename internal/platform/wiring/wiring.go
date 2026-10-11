@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -20,6 +21,7 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/config"
 	"github.com/diegoczajka/travelu-api/internal/listing"
 	"github.com/diegoczajka/travelu-api/internal/platform/apidocs"
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 	"github.com/diegoczajka/travelu-api/internal/review"
 	"github.com/diegoczajka/travelu-api/internal/tripdate"
@@ -51,11 +53,11 @@ func BuildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB, version s
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(db, version))
 	apidocs.RegisterRoutes(mux)
-	mux.Handle("POST /api/v1/auth/register", registerLimiter.Middleware()(http.HandlerFunc(authHandler.Register)))
-	mux.Handle("POST /api/v1/auth/login", loginLimiter.Middleware()(http.HandlerFunc(authHandler.Login)))
-	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.Refresh)
-	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
-	mux.Handle("GET /api/v1/users/me", auth.RequireAuth(tokenManager)(http.HandlerFunc(authHandler.Me)))
+	mux.Handle("POST /api/v1/auth/register", audit.Action("auth.register", registerLimiter.Middleware()(http.HandlerFunc(authHandler.Register))))
+	mux.Handle("POST /api/v1/auth/login", audit.Action("auth.login", loginLimiter.Middleware()(http.HandlerFunc(authHandler.Login))))
+	mux.Handle("POST /api/v1/auth/refresh", audit.Action("auth.refresh", http.HandlerFunc(authHandler.Refresh)))
+	mux.Handle("POST /api/v1/auth/logout", audit.Action("auth.logout", http.HandlerFunc(authHandler.Logout)))
+	mux.Handle("GET /api/v1/users/me", audit.Action("user.get_me", auth.RequireAuth(tokenManager)(http.HandlerFunc(authHandler.Me))))
 
 	requireAuth := auth.RequireAuth(tokenManager)
 
@@ -83,9 +85,21 @@ func BuildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB, version s
 		httpx.Recover(),
 		httpx.RequestID(),
 		httpx.AccessLog(logger),
+		audit.Middleware(audit.Config{
+			Logger:    logger,
+			RequestID: httpx.RequestIDFrom,
+			ClientIP:  func(r *http.Request) string { return httpx.ClientIP(r, cfg.TrustProxy) },
+			Skip:      skipAudit,
+		}),
 		httpx.CORS(cfg.CORSAllowedOrigins),
 		httpx.MaxBodyBytes(maxRequestBody),
 	)
+}
+
+// skipAudit keeps health checks (polled constantly by CI and monitors) and
+// the static API docs out of the audit trail; they carry no user action.
+func skipAudit(r *http.Request) bool {
+	return r.URL.Path == "/health" || strings.HasPrefix(r.URL.Path, "/docs")
 }
 
 // healthHandler reports whether the database is reachable. Behind the

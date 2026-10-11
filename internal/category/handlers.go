@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 )
 
@@ -24,11 +25,11 @@ func NewHandler(service *Service) CategoryHandlers {
 // so callers only need to know about this one method instead of each
 // route/method/middleware combination.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, requireAuth httpx.Middleware) {
-	mux.Handle("POST /api/v1/categories", requireAuth(http.HandlerFunc(h.Create)))
-	mux.Handle("GET /api/v1/categories", requireAuth(http.HandlerFunc(h.List)))
-	mux.Handle("GET /api/v1/categories/slug/{slug}", requireAuth(http.HandlerFunc(h.GetBySlug)))
-	mux.Handle("GET /api/v1/categories/{id}", requireAuth(http.HandlerFunc(h.GetByID)))
-	mux.Handle("PUT /api/v1/categories/{id}", requireAuth(http.HandlerFunc(h.Update)))
+	mux.Handle("POST /api/v1/categories", audit.Action("category.create", requireAuth(http.HandlerFunc(h.Create))))
+	mux.Handle("GET /api/v1/categories", audit.Action("category.list", requireAuth(http.HandlerFunc(h.List))))
+	mux.Handle("GET /api/v1/categories/slug/{slug}", audit.Action("category.get_by_slug", requireAuth(http.HandlerFunc(h.GetBySlug))))
+	mux.Handle("GET /api/v1/categories/{id}", audit.Action("category.get", requireAuth(http.HandlerFunc(h.GetByID))))
+	mux.Handle("PUT /api/v1/categories/{id}", audit.Action("category.update", requireAuth(http.HandlerFunc(h.Update))))
 }
 
 type createCategoryRequest struct {
@@ -89,6 +90,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.SetResourceID(r.Context(), created.ID)
 	httpx.WriteJSON(w, http.StatusCreated, created)
 }
 

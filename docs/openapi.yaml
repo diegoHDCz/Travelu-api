@@ -3,10 +3,26 @@ info:
   title: travelu-api
   description: >
     API REST monolítica do travelu, organizada por domínio. Documenta exatamente
-    o que `cmd/api/main.go` registra no mux: health, auth, categories, bookings,
-    listings, reviews e trip-dates. Todas as rotas `/api/v1/**` exceto
-    `/auth/*` exigem `Authorization: Bearer <access_token>`.
+    o que `internal/platform/wiring/wiring.go` registra no mux: health, auth,
+    categories, bookings, listings, reviews e trip-dates. Todas as rotas
+    `/api/v1/**` exceto `/auth/*` exigem `Authorization: Bearer <access_token>`.
+
+
+    **Erros**: toda resposta de erro usa o envelope
+    `{"error": {"code", "message", "fields"?}}`. O cliente deve decidir pelo
+    `code` (estável), nunca pelo texto de `message`. Em erros de validação
+    (422) e de tipo no corpo (400), `fields` traz um item por campo inválido
+    com o nome do campo no JSON, a regra que falhou e o parâmetro dela, para o
+    app marcar o input certo e traduzir a mensagem.
+
+
+    **Rastreio**: toda resposta traz o header `X-Request-ID` (o valor enviado
+    pelo cliente é reaproveitado, senão um é gerado). Ele aparece nos logs de
+    audit do servidor — inclua-o ao reportar um erro.
   version: "1.0.0"
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
 servers:
   - url: http://localhost:8080
     description: Desenvolvimento local (PORT default 8080)
@@ -76,8 +92,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: E-mail ou telefone já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                email_taken:
+                  value: { error: { code: email_taken, message: email already in use } }
+                phone_taken:
+                  value: { error: { code: phone_taken, message: phone already in use } }
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/auth/login:
     post:
@@ -102,6 +137,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Credenciais inválidas
           content:
@@ -110,14 +147,14 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
               example:
                 error: { code: invalid_credentials, message: invalid login or password }
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: Rate limit excedido
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/auth/refresh:
     post:
@@ -142,6 +179,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Refresh token inválido, expirado ou reutilizado
           content:
@@ -150,8 +189,12 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
               example:
                 error: { code: invalid_refresh_token, message: refresh token is invalid or expired }
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/auth/logout:
     post:
@@ -169,8 +212,14 @@ paths:
       responses:
         "204":
           description: Revogado (ou já estava revogado/inexistente)
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/users/me:
     get:
@@ -186,6 +235,8 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/categories:
     post:
@@ -205,14 +256,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Category"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "409":
           description: Nome ou slug já em uso
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       operationId: listCategories
       tags: [categories]
@@ -228,6 +287,8 @@ paths:
                   $ref: "#/components/schemas/Category"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/categories/slug/{slug}:
     get:
@@ -246,8 +307,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Category"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/categories/{id}:
     get:
@@ -263,8 +328,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Category"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: updateCategory
       tags: [categories]
@@ -284,6 +353,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Category"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -292,8 +365,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/bookings:
     post:
@@ -314,8 +391,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Booking"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       operationId: listMyBookings
       tags: [bookings]
@@ -331,6 +416,8 @@ paths:
                   $ref: "#/components/schemas/Booking"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/bookings/{id}:
     get:
@@ -349,8 +436,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Booking"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/listings:
     post:
@@ -371,8 +462,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Listing"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       operationId: listActiveListings
       tags: [listings]
@@ -388,6 +487,8 @@ paths:
                   $ref: "#/components/schemas/Listing"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/listings/{id}:
     get:
@@ -403,8 +504,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Listing"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: updateListing
       tags: [listings]
@@ -425,10 +530,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Listing"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/reviews:
     post:
@@ -449,10 +562,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Review"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       operationId: listReviewsByListing
       tags: [reviews]
@@ -478,6 +597,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error: { code: invalid_listing_id, message: listing_id query parameter is required }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/reviews/{id}:
     get:
@@ -494,8 +619,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Review"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: updateReview
       tags: [reviews]
@@ -519,12 +648,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Review"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/trip-dates:
     post:
@@ -544,10 +679,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TripDate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       operationId: listTripDatesByListing
       tags: [trip-dates]
@@ -573,8 +714,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error: { code: invalid_listing_id, message: listing_id query parameter is required }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/trip-dates/{id}:
     get:
@@ -590,8 +735,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TripDate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
 components:
   securitySchemes:
@@ -628,7 +777,70 @@ components:
       required: true
       schema: { type: string, format: uuid }
 
+  headers:
+    RequestId:
+      description: ID da requisição; o enviado pelo cliente em `X-Request-ID` ou um gerado pelo servidor.
+      schema: { type: string, example: 3f9c2a7e5b1d4c8e9a0b6f2d1e7c4a5b }
+
   responses:
+    BadRequest:
+      description: >
+        Corpo da requisição ilegível: JSON malformado, vazio, ou com um campo
+        no tipo errado. No erro de tipo, `fields` indica o campo (`rule: type`
+        e `param` com o tipo esperado).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            wrong_type:
+              summary: Campo com tipo errado
+              value:
+                error:
+                  code: invalid_body
+                  message: number_of_guests must be of type int
+                  fields:
+                    - { field: number_of_guests, rule: type, param: int, message: number_of_guests must be of type int }
+            malformed:
+              summary: JSON malformado
+              value: { error: { code: invalid_body, message: request body is not valid JSON } }
+            empty:
+              summary: Corpo vazio
+              value: { error: { code: invalid_body, message: request body is empty } }
+    PayloadTooLarge:
+      description: Corpo maior que o limite de 1 MB
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error: { code: body_too_large, message: request body must be at most 1048576 bytes }
+    TooManyRequests:
+      description: Rate limit por IP excedido (1 req/s, burst 5)
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error: { code: too_many_requests, message: "too many requests, try again later" }
+    InternalError:
+      description: >
+        Erro inesperado no servidor. Os detalhes nunca são expostos ao cliente;
+        use o `X-Request-ID` para localizar o erro nos logs.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error: { code: internal_error, message: an unexpected error occurred }
     NotFound:
       description: Recurso não encontrado
       content:
@@ -644,13 +856,24 @@ components:
           example:
             error: { code: unauthorized, message: missing or invalid authorization token }
     ValidationError:
-      description: Corpo inválido ou falhou uma regra de validação
+      description: >
+        O corpo é JSON válido mas falhou uma regra de validação. `fields` traz
+        todos os campos inválidos de uma vez e `message` repete a mensagem do
+        primeiro. Regras de negócio validadas no service (ex.: `invalid_phone`)
+        também usam 422, mas sem `fields`.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
           example:
-            error: { code: validation_error, message: "Key: 'CreateInput.Name' Error:Field validation for 'Name' failed on the 'required' tag" }
+            error:
+              code: validation_error
+              message: email must be at most 255 characters long
+              fields:
+                - { field: email, rule: max, param: "255", message: email must be at most 255 characters long }
+                - { field: password, rule: min, param: "8", message: password must be at least 8 characters long }
 
   schemas:
     HealthStatus:
@@ -662,9 +885,47 @@ components:
     Error:
       type: object
       properties:
-        code: { type: string }
-        message: { type: string }
+        code:
+          type: string
+          description: >
+            Código estável e legível por máquina. Genéricos: invalid_body,
+            body_too_large, validation_error, unauthorized, too_many_requests,
+            internal_error. Por domínio: invalid_credentials,
+            invalid_refresh_token, email_taken, phone_taken, invalid_phone,
+            category_name_taken, category_slug_taken, invalid_listing_id e
+            <recurso>_not_found (user, category, booking, listing, review,
+            trip_date).
+          example: validation_error
+        message:
+          type: string
+          description: Texto em inglês para desenvolvedores; não usar para lógica no cliente.
+        fields:
+          type: array
+          description: Presente apenas em erros de validação (422) e de tipo no corpo (400); um item por campo inválido.
+          items: { $ref: "#/components/schemas/FieldError" }
       required: [code, message]
+
+    FieldError:
+      type: object
+      properties:
+        field: { type: string, description: Nome do campo no JSON, example: email }
+        rule:
+          type: string
+          description: >
+            Regra que falhou: required, required_without, email, min, max, len,
+            oneof, uuid, gt, gtfield (422) ou type (400). Em strings, min/max/len
+            contam caracteres; em números, comparam o valor.
+          enum: [required, required_without, email, min, max, len, oneof, uuid, gt, gtfield, type]
+          example: max
+        param:
+          type: string
+          description: >
+            Parâmetro da regra, quando houver: o limite em min/max/len/gt, os
+            valores aceitos separados por espaço em oneof, o outro campo em
+            gtfield/required_without, ou o tipo esperado em type.
+          example: "255"
+        message: { type: string, example: email must be at most 255 characters long }
+      required: [field, rule, message]
 
     ErrorEnvelope:
       type: object

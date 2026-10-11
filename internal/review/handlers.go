@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/diegoczajka/travelu-api/internal/auth"
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 )
 
@@ -27,10 +28,10 @@ func NewHandler(service *Service) ReviewHandlers {
 // callers only need to know about this one method instead of each
 // route/method/middleware combination.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, requireAuth httpx.Middleware) {
-	mux.Handle("POST /api/v1/reviews", requireAuth(http.HandlerFunc(h.Create)))
-	mux.Handle("GET /api/v1/reviews", requireAuth(http.HandlerFunc(h.List)))
-	mux.Handle("GET /api/v1/reviews/{id}", requireAuth(http.HandlerFunc(h.GetByID)))
-	mux.Handle("PUT /api/v1/reviews/{id}", requireAuth(http.HandlerFunc(h.Update)))
+	mux.Handle("POST /api/v1/reviews", audit.Action("review.create", requireAuth(http.HandlerFunc(h.Create))))
+	mux.Handle("GET /api/v1/reviews", audit.Action("review.list", requireAuth(http.HandlerFunc(h.List))))
+	mux.Handle("GET /api/v1/reviews/{id}", audit.Action("review.get", requireAuth(http.HandlerFunc(h.GetByID))))
+	mux.Handle("PUT /api/v1/reviews/{id}", audit.Action("review.update", requireAuth(http.HandlerFunc(h.Update))))
 }
 
 type reviewResponse struct {
@@ -98,6 +99,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.SetResourceID(r.Context(), review.ID)
 	httpx.WriteJSON(w, http.StatusCreated, newReviewResponse(review))
 }
 

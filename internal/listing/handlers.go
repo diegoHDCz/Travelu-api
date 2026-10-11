@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/diegoczajka/travelu-api/internal/auth"
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 )
 
@@ -27,10 +28,10 @@ func NewHandler(service *Service) ListingHandlers {
 // so callers only need to know about this one method instead of each
 // route/method/middleware combination.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, requireAuth httpx.Middleware) {
-	mux.Handle("POST /api/v1/listings", requireAuth(http.HandlerFunc(h.Create)))
-	mux.Handle("GET /api/v1/listings", requireAuth(http.HandlerFunc(h.List)))
-	mux.Handle("GET /api/v1/listings/{id}", requireAuth(http.HandlerFunc(h.GetByID)))
-	mux.Handle("PUT /api/v1/listings/{id}", requireAuth(http.HandlerFunc(h.Update)))
+	mux.Handle("POST /api/v1/listings", audit.Action("listing.create", requireAuth(http.HandlerFunc(h.Create))))
+	mux.Handle("GET /api/v1/listings", audit.Action("listing.list", requireAuth(http.HandlerFunc(h.List))))
+	mux.Handle("GET /api/v1/listings/{id}", audit.Action("listing.get", requireAuth(http.HandlerFunc(h.GetByID))))
+	mux.Handle("PUT /api/v1/listings/{id}", audit.Action("listing.update", requireAuth(http.HandlerFunc(h.Update))))
 }
 
 type listingResponse struct {
@@ -155,6 +156,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.SetResourceID(r.Context(), created.ID)
 	httpx.WriteJSON(w, http.StatusCreated, newListingResponse(created))
 }
 

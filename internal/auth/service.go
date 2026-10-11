@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/user"
 )
 
@@ -46,7 +48,13 @@ func NewService(users UserService, refreshTokens RefreshTokenRepository, tokens 
 
 // Register creates a new user account.
 func (s *Service) Register(ctx context.Context, input user.CreateInput) (user.User, error) {
-	return s.users.Create(ctx, input)
+	created, err := s.users.Create(ctx, input)
+	if err != nil {
+		return user.User{}, err
+	}
+	audit.SetActor(ctx, created.ID)
+	audit.SetResourceID(ctx, created.ID)
+	return created, nil
 }
 
 // Login verifies a login identifier (email or phone) plus
@@ -60,12 +68,14 @@ func (s *Service) Login(ctx context.Context, login, password, deviceToken string
 	u, err := s.users.GetByLogin(ctx, login)
 	if err != nil {
 		if errors.Is(err, user.ErrNotFound) {
+			audit.Add(ctx, slog.String("reason", "unknown_login"))
 			return TokenPair{}, ErrInvalidCredentials
 		}
 		return TokenPair{}, err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
+		audit.Add(ctx, slog.String("reason", "wrong_password"), slog.String("target_user_id", u.ID))
 		return TokenPair{}, ErrInvalidCredentials
 	}
 
@@ -81,12 +91,20 @@ func (s *Service) Refresh(ctx context.Context, plainToken, deviceToken string) (
 	rt, err := s.refreshTokens.GetByTokenHash(ctx, hashToken(plainToken))
 	if err != nil {
 		if errors.Is(err, errRefreshTokenNotFound) {
+			audit.Add(ctx, slog.String("reason", "refresh_token_not_found"))
 			return TokenPair{}, ErrInvalidRefreshToken
 		}
 		return TokenPair{}, err
 	}
 
 	if rt.RevokedAt != nil {
+		// Reuse of a rotated token means it was likely stolen: flag it so it
+		// stands out in the audit trail, and every session gets revoked below.
+		audit.Add(ctx,
+			slog.String("reason", "refresh_token_reused"),
+			slog.String("target_user_id", rt.UserID),
+			slog.Bool("security_alert", true),
+		)
 		if err := s.refreshTokens.RevokeAllForUser(ctx, rt.UserID); err != nil {
 			return TokenPair{}, fmt.Errorf("revoke all refresh tokens after reuse: %w", err)
 		}
@@ -94,6 +112,7 @@ func (s *Service) Refresh(ctx context.Context, plainToken, deviceToken string) (
 	}
 
 	if time.Now().UTC().After(rt.ExpiresAt) {
+		audit.Add(ctx, slog.String("reason", "refresh_token_expired"), slog.String("target_user_id", rt.UserID))
 		return TokenPair{}, ErrInvalidRefreshToken
 	}
 
@@ -115,6 +134,7 @@ func (s *Service) Logout(ctx context.Context, plainToken string) error {
 		return err
 	}
 
+	audit.SetActor(ctx, rt.UserID)
 	if rt.RevokedAt != nil {
 		return nil
 	}
@@ -143,6 +163,7 @@ func (s *Service) issueTokenPair(ctx context.Context, userID, deviceToken string
 		return TokenPair{}, fmt.Errorf("store refresh token: %w", err)
 	}
 
+	audit.SetActor(ctx, userID)
 	return TokenPair{
 		AccessToken:  access,
 		RefreshToken: plain,

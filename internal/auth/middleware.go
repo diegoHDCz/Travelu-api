@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/diegoczajka/travelu-api/internal/platform/audit"
 	"github.com/diegoczajka/travelu-api/internal/platform/httpx"
 )
 
@@ -26,6 +27,7 @@ func RequireAuth(tokens *TokenManager) httpx.Middleware {
 				return
 			}
 
+			audit.SetActor(r.Context(), userID)
 			ctx := WithUserID(r.Context(), userID)
 			ctx = WithDeviceToken(ctx, deviceToken)
 			next.ServeHTTP(w, r.WithContext(ctx))
