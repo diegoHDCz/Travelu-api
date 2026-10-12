@@ -1,5 +1,5 @@
 // Package notification implements the notification domain: the entity, its
-// persistence interface, business rules and the MySQL repository. It maps to
+// persistence interface, business rules and the Postgres repository. It maps to
 // the notifications table.
 package notification
 

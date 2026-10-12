@@ -1,15 +1,12 @@
-locals {
-  db_credentials = jsondecode(data.aws_secretsmanager_secret_version.db.secret_string)
-
-  # NOTE on the tradeoff here: the DB password ends up in the Lambda's
-  # environment variables (encrypted at rest, but readable by anyone with
-  # lambda:GetFunctionConfiguration) and in Terraform state. The more
-  # hardened alternative is having the Go binary call Secrets Manager at
-  # cold start instead of reading DATABASE_DSN directly — deliberately not
-  # done here to avoid touching internal/config for this iteration. Revisit
-  # if this project's state file or IAM boundary ever gets less trusted.
-  database_dsn = "${local.db_credentials.username}:${local.db_credentials.password}@tcp(${aws_db_proxy.this.endpoint}:3306)/${var.db_name}?parseTime=true&loc=UTC&charset=utf8mb4&tls=preferred"
-}
+# The DB lives in Supabase (managed Postgres), reached over the public
+# internet with TLS — so neither function is attached to a VPC.
+#
+# NOTE on the tradeoff here: the DB password is part of DATABASE_DSN, so it
+# ends up in the Lambda's environment variables (encrypted at rest, but
+# readable by anyone with lambda:GetFunctionConfiguration) and in Terraform
+# state. The more hardened alternative is having the Go binary fetch it from
+# Secrets Manager at cold start. Revisit if this project's state file or IAM
+# boundary ever gets less trusted.
 
 resource "aws_iam_role" "lambda_exec" {
   name = "${var.project_name}-${var.environment}-lambda-exec"
@@ -22,11 +19,6 @@ resource "aws_iam_role" "lambda_exec" {
       Action    = "sts:AssumeRole"
     }]
   })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -52,11 +44,6 @@ resource "aws_lambda_function" "api" {
   timeout     = 15
   memory_size = 256
 
-  vpc_config {
-    subnet_ids         = aws_subnet.private[*].id
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
   tracing_config {
     mode = "Active"
   }
@@ -64,8 +51,8 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       APP_ENV                    = "production"
-      DATABASE_DSN               = local.database_dsn
-      DATABASE_MAX_OPEN_CONNS    = "4" # Deliberately low: N concurrent Lambda instances each hold a pool, and RDS Proxy — not a large per-instance pool — is what should absorb concurrency.
+      DATABASE_DSN               = var.database_dsn_api
+      DATABASE_MAX_OPEN_CONNS    = "4" # Deliberately low: N concurrent Lambda instances each hold a pool, and Supabase's transaction pooler — not a large per-instance pool — is what should absorb concurrency.
       DATABASE_MAX_IDLE_CONNS    = "4"
       DATABASE_CONN_MAX_LIFETIME = "5m"
       JWT_SECRET                 = var.jwt_secret
@@ -93,15 +80,10 @@ resource "aws_lambda_function" "migrate" {
   timeout     = 120
   memory_size = 128
 
-  vpc_config {
-    subnet_ids         = aws_subnet.private[*].id
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
   environment {
     variables = {
       APP_ENV                    = "production"
-      DATABASE_DSN               = local.database_dsn
+      DATABASE_DSN               = var.database_dsn_migrate
       DATABASE_CONN_MAX_LIFETIME = "5m"
       JWT_SECRET                 = var.jwt_secret # Load() validates its length even though migrate never uses it — cheaper to pass it through than to fork config.Load.
       LOG_LEVEL                  = "info"

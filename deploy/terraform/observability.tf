@@ -68,7 +68,7 @@ resource "aws_cloudwatch_metric_alarm" "api_duration_p95" {
     FunctionName = aws_lambda_function.api.function_name
   }
 
-  alarm_description  = "p95 latency is approaching the 15s function timeout — likely a slow query or a cold-start/RDS Proxy connection issue."
+  alarm_description  = "p95 latency is approaching the 15s function timeout — likely a slow query or a cold-start/DB pooler connection issue."
   alarm_actions      = [aws_sns_topic.alarms.arn]
   treat_missing_data = "notBreaching"
 }

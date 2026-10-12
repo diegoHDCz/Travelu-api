@@ -39,10 +39,10 @@ const (
 // middleware-wrapped HTTP handler. version is baked in by the caller's
 // -ldflags "-X main.version=..." and surfaced on /health.
 func BuildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB, version string) http.Handler {
-	userRepo := user.NewMySQLRepository(db)
+	userRepo := user.NewPostgresRepository(db)
 	userService := user.NewService(userRepo)
 
-	refreshTokenRepo := auth.NewMySQLRefreshTokenRepository(db)
+	refreshTokenRepo := auth.NewPostgresRefreshTokenRepository(db)
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	authService := auth.NewService(userService, refreshTokenRepo, tokenManager, cfg.RefreshTokenTTL)
 	authHandler := auth.NewHandler(authService)
@@ -61,23 +61,23 @@ func BuildHandler(cfg config.Config, logger *slog.Logger, db *sqlx.DB, version s
 
 	requireAuth := auth.RequireAuth(tokenManager)
 
-	categoryRepo := category.NewMySQLRepository(db)
+	categoryRepo := category.NewPostgresRepository(db)
 	categoryService := category.NewService(categoryRepo)
 	category.NewHandler(categoryService).RegisterRoutes(mux, requireAuth)
 
-	bookingRepo := booking.NewMySQLRepository(db)
+	bookingRepo := booking.NewPostgresRepository(db)
 	bookingService := booking.NewService(bookingRepo)
 	booking.NewHandler(bookingService).RegisterRoutes(mux, requireAuth)
 
-	listingRepo := listing.NewMySQLRepository(db)
+	listingRepo := listing.NewPostgresRepository(db)
 	listingService := listing.NewService(listingRepo)
 	listing.NewHandler(listingService).RegisterRoutes(mux, requireAuth)
 
-	reviewRepo := review.NewMySQLRepository(db)
+	reviewRepo := review.NewPostgresRepository(db)
 	reviewService := review.NewService(reviewRepo)
 	review.NewHandler(reviewService).RegisterRoutes(mux, requireAuth)
 
-	tripDateRepo := tripdate.NewMySQLRepository(db)
+	tripDateRepo := tripdate.NewPostgresRepository(db)
 	tripDateService := tripdate.NewService(tripDateRepo)
 	tripdate.NewHandler(tripDateService).RegisterRoutes(mux, requireAuth)
 

@@ -12,22 +12,22 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // tripDateRow mirrors the trip_dates table layout; mapping to/from the
@@ -70,10 +70,10 @@ func nullableCapacity(capacity *int) any {
 	return *capacity
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, td TripDate) (TripDate, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, td TripDate) (TripDate, error) {
 	const query = `
 		INSERT INTO trip_dates (id, listing_id, start_date, end_date, max_capacity, current_bookings, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 	td.ID = uuid.NewString()
 
@@ -86,11 +86,11 @@ func (repo *MySQLRepository) Create(ctx context.Context, td TripDate) (TripDate,
 	return td, nil
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (TripDate, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (TripDate, error) {
 	const query = `
 		SELECT id, listing_id, start_date, end_date, max_capacity, current_bookings, is_active, created_at, updated_at
 		FROM trip_dates
-		WHERE id = ?`
+		WHERE id = $1`
 
 	var row tripDateRow
 	if err := repo.db.GetContext(ctx, &row, query, id); err != nil {
@@ -103,11 +103,11 @@ func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (TripDate, 
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) ListByListingID(ctx context.Context, listingID string) ([]TripDate, error) {
+func (repo *PostgresRepository) ListByListingID(ctx context.Context, listingID string) ([]TripDate, error) {
 	const query = `
 		SELECT id, listing_id, start_date, end_date, max_capacity, current_bookings, is_active, created_at, updated_at
 		FROM trip_dates
-		WHERE listing_id = ?
+		WHERE listing_id = $1
 		ORDER BY start_date`
 
 	var rows []tripDateRow

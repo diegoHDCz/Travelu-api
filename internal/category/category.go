@@ -1,5 +1,5 @@
 // Package category implements the category domain: the entity, its
-// persistence interface, business rules and the MySQL repository.
+// persistence interface, business rules and the Postgres repository.
 package category
 
 import "time"

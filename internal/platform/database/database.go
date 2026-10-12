@@ -1,4 +1,4 @@
-// Package database opens and configures the MySQL connection pool used by
+// Package database opens and configures the Postgres connection pool used by
 // every repository in the application.
 package database
 
@@ -8,11 +8,13 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Options configures the connection pool. DSN must already include
-// parseTime=true&loc=UTC&charset=utf8mb4 (and tls=preferred in production).
+// Options configures the connection pool. DSN is a postgres:// URL; in
+// production it must carry sslmode=require, and when it points at Supabase's
+// transaction pooler (port 6543) also default_query_exec_mode=simple_protocol,
+// since that pooler can't keep prepared statements across transactions.
 type Options struct {
 	DSN             string
 	MaxOpenConns    int
@@ -23,7 +25,7 @@ type Options struct {
 // Open creates the sqlx pool and verifies connectivity with a single ping,
 // so the process fails fast at startup if the database is unreachable.
 func Open(ctx context.Context, opts Options) (*sqlx.DB, error) {
-	db, err := sqlx.Open("mysql", opts.DSN)
+	db, err := sqlx.Open("pgx", opts.DSN)
 	if err != nil {
 		return nil, err
 	}

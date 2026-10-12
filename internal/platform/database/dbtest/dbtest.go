@@ -1,5 +1,5 @@
 // Package dbtest provides a sqlmock-backed *sqlx.DB for repository unit
-// tests, so they exercise the SQL mapping without a real MySQL server.
+// tests, so they exercise the SQL mapping without a real Postgres server.
 package dbtest
 
 import (
@@ -27,5 +27,5 @@ func New(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {
 		_ = db.Close()
 	})
 
-	return sqlx.NewDb(db, "mysql"), mock
+	return sqlx.NewDb(db, "pgx"), mock
 }

@@ -4,5 +4,10 @@
 jwt_secret           = "generate-with-openssl-rand-base64-48-at-least-32-bytes"
 cors_allowed_origins = "https://example.com"
 
+# Supabase → Project Settings → Database → Connection string.
+# api: transaction pooler (6543); migrate: session pooler (5432).
+database_dsn_api     = "postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require&default_query_exec_mode=simple_protocol"
+database_dsn_migrate = "postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require"
+
 # Uncomment to get emailed when a CloudWatch alarm fires (Fase 4).
 # alarm_notification_email = "you@example.com"

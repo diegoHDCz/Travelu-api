@@ -1,5 +1,5 @@
 // Package user implements the user domain: the entity, its persistence
-// interface, business rules and the MySQL repository.
+// interface, business rules and the Postgres repository.
 package user
 
 import "time"

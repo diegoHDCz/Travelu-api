@@ -16,9 +16,9 @@ import (
 
 var refreshTokenColumns = []string{"id", "user_id", "token_hash", "expires_at", "revoked_at", "created_at"}
 
-func TestMySQLRefreshTokenRepository_Create(t *testing.T) {
+func TestPostgresRefreshTokenRepository_Create(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRefreshTokenRepository(db)
+	repo := NewPostgresRefreshTokenRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	mock.ExpectExec(`INSERT INTO refresh_tokens`).
@@ -33,9 +33,9 @@ func TestMySQLRefreshTokenRepository_Create(t *testing.T) {
 	assert.Equal(t, "abc123", created.TokenHash)
 }
 
-func TestMySQLRefreshTokenRepository_Create_DBError(t *testing.T) {
+func TestPostgresRefreshTokenRepository_Create_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRefreshTokenRepository(db)
+	repo := NewPostgresRefreshTokenRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectExec(`INSERT INTO refresh_tokens`).WillReturnError(boom)
@@ -44,7 +44,7 @@ func TestMySQLRefreshTokenRepository_Create_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRefreshTokenRepository_GetByTokenHash(t *testing.T) {
+func TestPostgresRefreshTokenRepository_GetByTokenHash(t *testing.T) {
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	revoked := now.Add(time.Minute)
 
@@ -59,9 +59,9 @@ func TestMySQLRefreshTokenRepository_GetByTokenHash(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRefreshTokenRepository(db)
+			repo := NewPostgresRefreshTokenRepository(db)
 
-			mock.ExpectQuery(`FROM refresh_tokens\s+WHERE token_hash = \?`).
+			mock.ExpectQuery(`FROM refresh_tokens\s+WHERE token_hash = \$1`).
 				WithArgs("abc123").
 				WillReturnRows(sqlmock.NewRows(refreshTokenColumns).
 					AddRow("rt-1", "u-1", "abc123", now.Add(time.Hour), tc.revokedAt, now))
@@ -76,7 +76,7 @@ func TestMySQLRefreshTokenRepository_GetByTokenHash(t *testing.T) {
 	}
 }
 
-func TestMySQLRefreshTokenRepository_GetByTokenHash_Errors(t *testing.T) {
+func TestPostgresRefreshTokenRepository_GetByTokenHash_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -90,7 +90,7 @@ func TestMySQLRefreshTokenRepository_GetByTokenHash_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRefreshTokenRepository(db)
+			repo := NewPostgresRefreshTokenRepository(db)
 
 			mock.ExpectQuery(`FROM refresh_tokens`).WillReturnError(tc.dbErr)
 
@@ -100,23 +100,23 @@ func TestMySQLRefreshTokenRepository_GetByTokenHash_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRefreshTokenRepository_Revoke(t *testing.T) {
+func TestPostgresRefreshTokenRepository_Revoke(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRefreshTokenRepository(db)
+	repo := NewPostgresRefreshTokenRepository(db)
 
-	mock.ExpectExec(`UPDATE refresh_tokens SET revoked_at = \? WHERE id = \? AND revoked_at IS NULL`).
+	mock.ExpectExec(`UPDATE refresh_tokens SET revoked_at = \$1 WHERE id = \$2 AND revoked_at IS NULL`).
 		WithArgs(sqlmock.AnyArg(), "rt-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	require.NoError(t, repo.Revoke(context.Background(), "rt-1"))
 }
 
-func TestMySQLRefreshTokenRepository_RevokeAllForUser(t *testing.T) {
+func TestPostgresRefreshTokenRepository_RevokeAllForUser(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRefreshTokenRepository(db)
+	repo := NewPostgresRefreshTokenRepository(db)
 	boom := errors.New("boom")
 
-	mock.ExpectExec(`UPDATE refresh_tokens SET revoked_at = \? WHERE user_id = \? AND revoked_at IS NULL`).
+	mock.ExpectExec(`UPDATE refresh_tokens SET revoked_at = \$1 WHERE user_id = \$2 AND revoked_at IS NULL`).
 		WithArgs(sqlmock.AnyArg(), "u-1").
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`UPDATE refresh_tokens`).WillReturnError(boom)
@@ -125,9 +125,9 @@ func TestMySQLRefreshTokenRepository_RevokeAllForUser(t *testing.T) {
 	require.ErrorIs(t, repo.RevokeAllForUser(context.Background(), "u-1"), boom)
 }
 
-func TestMySQLRefreshTokenRepository_WithTx(t *testing.T) {
+func TestPostgresRefreshTokenRepository_WithTx(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRefreshTokenRepository(db)
+	repo := NewPostgresRefreshTokenRepository(db)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE refresh_tokens`).WillReturnResult(sqlmock.NewResult(0, 1))

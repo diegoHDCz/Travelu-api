@@ -12,22 +12,22 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // reviewRow mirrors the reviews table layout; mapping to/from the domain
@@ -70,10 +70,10 @@ func nullable(s string) any {
 	return s
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, r Review) (Review, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, r Review) (Review, error) {
 	const query = `
 		INSERT INTO reviews (id, customer_id, listing_id, booking_id, rating, title, comment, is_verified, is_approved, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
 	r.ID = uuid.NewString()
 
@@ -87,11 +87,11 @@ func (repo *MySQLRepository) Create(ctx context.Context, r Review) (Review, erro
 	return r, nil
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Review, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (Review, error) {
 	const query = `
 		SELECT id, customer_id, listing_id, booking_id, rating, title, comment, is_verified, is_approved, created_at, updated_at
 		FROM reviews
-		WHERE id = ?`
+		WHERE id = $1`
 
 	var row reviewRow
 	if err := repo.db.GetContext(ctx, &row, query, id); err != nil {
@@ -104,11 +104,11 @@ func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Review, er
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) ListByListingID(ctx context.Context, listingID string) ([]Review, error) {
+func (repo *PostgresRepository) ListByListingID(ctx context.Context, listingID string) ([]Review, error) {
 	const query = `
 		SELECT id, customer_id, listing_id, booking_id, rating, title, comment, is_verified, is_approved, created_at, updated_at
 		FROM reviews
-		WHERE listing_id = ? AND is_approved = TRUE
+		WHERE listing_id = $1 AND is_approved = TRUE
 		ORDER BY created_at DESC`
 
 	var rows []reviewRow
@@ -123,11 +123,11 @@ func (repo *MySQLRepository) ListByListingID(ctx context.Context, listingID stri
 	return reviews, nil
 }
 
-func (repo *MySQLRepository) Update(ctx context.Context, r Review) (Review, error) {
+func (repo *PostgresRepository) Update(ctx context.Context, r Review) (Review, error) {
 	const query = `
 		UPDATE reviews
-		SET rating = ?, title = ?, comment = ?, updated_at = ?
-		WHERE id = ?`
+		SET rating = $1, title = $2, comment = $3, updated_at = $4
+		WHERE id = $5`
 
 	r.UpdatedAt = time.Now().UTC()
 

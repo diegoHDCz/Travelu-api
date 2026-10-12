@@ -18,7 +18,7 @@ var tripDateColumns = []string{
 	"id", "listing_id", "start_date", "end_date", "max_capacity", "current_bookings", "is_active", "created_at", "updated_at",
 }
 
-func TestMySQLRepository_Create(t *testing.T) {
+func TestPostgresRepository_Create(t *testing.T) {
 	tests := []struct {
 		name        string
 		maxCapacity *int
@@ -30,7 +30,7 @@ func TestMySQLRepository_Create(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 			now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 			start := now.AddDate(0, 1, 0)
 			end := start.AddDate(0, 0, 7)
@@ -49,9 +49,9 @@ func TestMySQLRepository_Create(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_Create_DBError(t *testing.T) {
+func TestPostgresRepository_Create_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectExec(`INSERT INTO trip_dates`).WillReturnError(boom)
@@ -60,14 +60,14 @@ func TestMySQLRepository_Create_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_GetByID(t *testing.T) {
+func TestPostgresRepository_GetByID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	start := now.AddDate(0, 1, 0)
 	end := start.AddDate(0, 0, 7)
 
-	mock.ExpectQuery(`FROM trip_dates\s+WHERE id = \?`).
+	mock.ExpectQuery(`FROM trip_dates\s+WHERE id = \$1`).
 		WithArgs("td-1").
 		WillReturnRows(sqlmock.NewRows(tripDateColumns).
 			AddRow("td-1", "list-1", start, end, int64(10), 3, true, now, now))
@@ -81,7 +81,7 @@ func TestMySQLRepository_GetByID(t *testing.T) {
 	}, got)
 }
 
-func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+func TestPostgresRepository_GetByID_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -95,7 +95,7 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
 			mock.ExpectQuery(`FROM trip_dates`).WillReturnError(tc.dbErr)
 
@@ -105,12 +105,12 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_ListByListingID(t *testing.T) {
+func TestPostgresRepository_ListByListingID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM trip_dates\s+WHERE listing_id = \?\s+ORDER BY start_date`).
+	mock.ExpectQuery(`FROM trip_dates\s+WHERE listing_id = \$1\s+ORDER BY start_date`).
 		WithArgs("list-1").
 		WillReturnRows(sqlmock.NewRows(tripDateColumns).
 			AddRow("td-1", "list-1", now, now.AddDate(0, 0, 3), nil, 0, true, now, now).
@@ -124,9 +124,9 @@ func TestMySQLRepository_ListByListingID(t *testing.T) {
 	assert.Equal(t, 5, *got[1].MaxCapacity)
 }
 
-func TestMySQLRepository_ListByListingID_DBError(t *testing.T) {
+func TestPostgresRepository_ListByListingID_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectQuery(`FROM trip_dates`).WillReturnError(boom)
@@ -135,9 +135,9 @@ func TestMySQLRepository_ListByListingID_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_WithTx(t *testing.T) {
+func TestPostgresRepository_WithTx(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO trip_dates`).WillReturnResult(sqlmock.NewResult(0, 1))

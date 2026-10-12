@@ -38,11 +38,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
-      # Migrations run first, against the VPC-private Aurora, via the
-      # migrate Lambda (which already has network access) — never from this
-      # runner directly, and never from the request-serving api Lambda's
-      # cold start. If this fails, the job stops before any traffic sees
-      # new code. See .claude/workload/go-refactor-deploy.md, Fase 1 item 2.
+      # Migrations run first, against Supabase Postgres, via the migrate
+      # Lambda (which already holds the session-pooler DSN) — never from this
+      # runner directly, so the DB credentials never touch CI, and never from
+      # the request-serving api Lambda's cold start. If this fails, the job
+      # stops before any traffic sees new code.
       - name: Update migrate function code
         run: |
           aws lambda update-function-code \

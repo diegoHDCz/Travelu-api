@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,9 +17,9 @@ import (
 
 var deviceTokenColumns = []string{"id", "user_id", "token", "platform", "is_active", "created_at", "updated_at"}
 
-func TestMySQLRepository_Create(t *testing.T) {
+func TestPostgresRepository_Create(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	mock.ExpectExec(`INSERT INTO device_tokens`).
@@ -33,7 +33,7 @@ func TestMySQLRepository_Create(t *testing.T) {
 	assert.NotEmpty(t, created.ID)
 }
 
-func TestMySQLRepository_Create_Errors(t *testing.T) {
+func TestPostgresRepository_Create_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -41,13 +41,13 @@ func TestMySQLRepository_Create_Errors(t *testing.T) {
 		dbErr error
 		want  error
 	}{
-		{"duplicate token", &mysql.MySQLError{Number: mysqlErrDuplicateEntry, Message: "Duplicate entry"}, ErrTokenTaken},
+		{"duplicate token", &pgconn.PgError{Code: pgUniqueViolation, ConstraintName: "uq_device_tokens_token"}, ErrTokenTaken},
 		{"db error", boom, boom},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
 			mock.ExpectExec(`INSERT INTO device_tokens`).WillReturnError(tc.dbErr)
 
@@ -57,12 +57,12 @@ func TestMySQLRepository_Create_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_GetByID(t *testing.T) {
+func TestPostgresRepository_GetByID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM device_tokens\s+WHERE id = \?`).
+	mock.ExpectQuery(`FROM device_tokens\s+WHERE id = \$1`).
 		WithArgs("dt-1").
 		WillReturnRows(sqlmock.NewRows(deviceTokenColumns).
 			AddRow("dt-1", "u-1", "abc123", PlatformAndroid, true, now, now))
@@ -75,7 +75,7 @@ func TestMySQLRepository_GetByID(t *testing.T) {
 	}, got)
 }
 
-func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+func TestPostgresRepository_GetByID_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -89,7 +89,7 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
 			mock.ExpectQuery(`FROM device_tokens`).WillReturnError(tc.dbErr)
 
@@ -99,12 +99,12 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_ListByUserID(t *testing.T) {
+func TestPostgresRepository_ListByUserID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM device_tokens\s+WHERE user_id = \?\s+ORDER BY created_at DESC`).
+	mock.ExpectQuery(`FROM device_tokens\s+WHERE user_id = \$1\s+ORDER BY created_at DESC`).
 		WithArgs("u-1").
 		WillReturnRows(sqlmock.NewRows(deviceTokenColumns).
 			AddRow("dt-2", "u-1", "t2", PlatformAndroid, true, now, now).
@@ -117,9 +117,9 @@ func TestMySQLRepository_ListByUserID(t *testing.T) {
 	assert.False(t, got[1].IsActive)
 }
 
-func TestMySQLRepository_ListByUserID_DBError(t *testing.T) {
+func TestPostgresRepository_ListByUserID_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectQuery(`FROM device_tokens`).WillReturnError(boom)
@@ -128,7 +128,7 @@ func TestMySQLRepository_ListByUserID_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_Deactivate(t *testing.T) {
+func TestPostgresRepository_Deactivate(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -144,9 +144,9 @@ func TestMySQLRepository_Deactivate(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
-			tc.result(mock.ExpectExec(`UPDATE device_tokens SET is_active = FALSE WHERE id = \?`).WithArgs("dt-1"))
+			tc.result(mock.ExpectExec(`UPDATE device_tokens SET is_active = FALSE WHERE id = \$1`).WithArgs("dt-1"))
 
 			err := repo.Deactivate(context.Background(), "dt-1")
 			if tc.want == nil {
@@ -158,9 +158,9 @@ func TestMySQLRepository_Deactivate(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_WithTx(t *testing.T) {
+func TestPostgresRepository_WithTx(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE device_tokens`).WillReturnResult(sqlmock.NewResult(0, 1))

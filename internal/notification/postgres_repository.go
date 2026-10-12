@@ -12,22 +12,22 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // notificationRow mirrors the notifications table layout; mapping to/from
@@ -64,10 +64,10 @@ func nullable(s string) any {
 	return s
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, n Notification) (Notification, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, n Notification) (Notification, error) {
 	const query = `
 		INSERT INTO notifications (id, user_id, title, body, type, reference_id, is_read, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	n.ID = uuid.NewString()
 
@@ -80,11 +80,11 @@ func (repo *MySQLRepository) Create(ctx context.Context, n Notification) (Notifi
 	return n, nil
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Notification, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (Notification, error) {
 	const query = `
 		SELECT id, user_id, title, body, type, reference_id, is_read, created_at
 		FROM notifications
-		WHERE id = ?`
+		WHERE id = $1`
 
 	var row notificationRow
 	if err := repo.db.GetContext(ctx, &row, query, id); err != nil {
@@ -97,11 +97,11 @@ func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Notificati
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) ListByUserID(ctx context.Context, userID string) ([]Notification, error) {
+func (repo *PostgresRepository) ListByUserID(ctx context.Context, userID string) ([]Notification, error) {
 	const query = `
 		SELECT id, user_id, title, body, type, reference_id, is_read, created_at
 		FROM notifications
-		WHERE user_id = ?
+		WHERE user_id = $1
 		ORDER BY created_at DESC`
 
 	var rows []notificationRow
@@ -116,8 +116,8 @@ func (repo *MySQLRepository) ListByUserID(ctx context.Context, userID string) ([
 	return notifications, nil
 }
 
-func (repo *MySQLRepository) MarkRead(ctx context.Context, id string) error {
-	const query = `UPDATE notifications SET is_read = TRUE WHERE id = ?`
+func (repo *PostgresRepository) MarkRead(ctx context.Context, id string) error {
+	const query = `UPDATE notifications SET is_read = TRUE WHERE id = $1`
 
 	result, err := repo.db.ExecContext(ctx, query, id)
 	if err != nil {

@@ -12,22 +12,22 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // listingRow mirrors the travel_listings table layout; mapping to/from the
@@ -112,14 +112,14 @@ func nullableCapacity(capacity *int) any {
 	return *capacity
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, l Listing) (Listing, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, l Listing) (Listing, error) {
 	const query = `
 		INSERT INTO travel_listings (
 			id, vendor_id, title, description, category, location, city, country,
 			price, currency, capacity, available_from, available_to, images, amenities,
 			rating, review_count, is_active, created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
 
 	l.ID = uuid.NewString()
 
@@ -134,13 +134,13 @@ func (repo *MySQLRepository) Create(ctx context.Context, l Listing) (Listing, er
 	return l, nil
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Listing, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (Listing, error) {
 	const query = `
 		SELECT id, vendor_id, title, description, category, location, city, country,
 			price, currency, capacity, available_from, available_to, images, amenities,
 			rating, review_count, is_active, created_at, updated_at
 		FROM travel_listings
-		WHERE id = ?`
+		WHERE id = $1`
 
 	var row listingRow
 	if err := repo.db.GetContext(ctx, &row, query, id); err != nil {
@@ -153,7 +153,7 @@ func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Listing, e
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) ListActive(ctx context.Context) ([]Listing, error) {
+func (repo *PostgresRepository) ListActive(ctx context.Context) ([]Listing, error) {
 	const query = `
 		SELECT id, vendor_id, title, description, category, location, city, country,
 			price, currency, capacity, available_from, available_to, images, amenities,
@@ -174,13 +174,13 @@ func (repo *MySQLRepository) ListActive(ctx context.Context) ([]Listing, error) 
 	return listings, nil
 }
 
-func (repo *MySQLRepository) Update(ctx context.Context, l Listing) (Listing, error) {
+func (repo *PostgresRepository) Update(ctx context.Context, l Listing) (Listing, error) {
 	const query = `
 		UPDATE travel_listings
-		SET title = ?, description = ?, category = ?, location = ?, city = ?, country = ?,
-			price = ?, currency = ?, capacity = ?, available_from = ?, available_to = ?,
-			images = ?, amenities = ?, is_active = ?, updated_at = ?
-		WHERE id = ?`
+		SET title = $1, description = $2, category = $3, location = $4, city = $5, country = $6,
+			price = $7, currency = $8, capacity = $9, available_from = $10, available_to = $11,
+			images = $12, amenities = $13, is_active = $14, updated_at = $15
+		WHERE id = $16`
 
 	l.UpdatedAt = time.Now().UTC()
 

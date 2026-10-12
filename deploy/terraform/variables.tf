@@ -14,42 +14,16 @@ variable "environment" {
   default = "production"
 }
 
-variable "vpc_cidr" {
-  type    = string
-  default = "10.42.0.0/16"
-}
-
-variable "private_subnet_cidrs" {
-  description = "At least two, in different AZs — Aurora's subnet group requires it."
-  type        = list(string)
-  default     = ["10.42.1.0/24", "10.42.2.0/24"]
-}
-
-variable "db_name" {
-  type    = string
-  default = "travelu"
-}
-
-variable "db_master_username" {
-  type    = string
-  default = "app"
-}
-
-variable "aurora_engine_version" {
-  description = "Aurora MySQL version string compatible with Serverless v2. Check `aws rds describe-db-engine-versions --engine aurora-mysql` for what's currently available before applying — this drifts over time."
+variable "database_dsn_api" {
+  description = "Supabase transaction-pooler DSN (Supavisor, port 6543) for the api Lambda. The transaction pooler can't keep prepared statements, so it must carry default_query_exec_mode=simple_protocol, e.g. postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require&default_query_exec_mode=simple_protocol. Pass via TF_VAR_database_dsn_api or a gitignored *.tfvars file — never commit it."
   type        = string
-  default     = "8.0.mysql_aurora.3.08.0"
+  sensitive   = true
 }
 
-variable "aurora_min_acu" {
-  description = "Minimum Aurora Capacity Units. 0.5 is the Serverless v2 floor."
-  type        = number
-  default     = 0.5
-}
-
-variable "aurora_max_acu" {
-  type    = number
-  default = 2
+variable "database_dsn_migrate" {
+  description = "Supabase session-pooler DSN (same pooler host, port 5432) for the migrate Lambda — goose needs session semantics. Not the direct db.<ref>.supabase.co host: that one is IPv6-only and Lambda egress is IPv4. e.g. postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require"
+  type        = string
+  sensitive   = true
 }
 
 variable "jwt_secret" {

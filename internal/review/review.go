@@ -1,5 +1,5 @@
 // Package review implements the review domain: the entity, its persistence
-// interface, business rules and the MySQL repository. It maps to the
+// interface, business rules and the Postgres repository. It maps to the
 // reviews table.
 package review
 

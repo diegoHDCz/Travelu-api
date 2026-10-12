@@ -16,9 +16,9 @@ import (
 
 var notificationColumns = []string{"id", "user_id", "title", "body", "type", "reference_id", "is_read", "created_at"}
 
-func TestMySQLRepository_Create(t *testing.T) {
+func TestPostgresRepository_Create(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	// An empty reference id must go out as NULL.
@@ -33,9 +33,9 @@ func TestMySQLRepository_Create(t *testing.T) {
 	assert.NotEmpty(t, created.ID)
 }
 
-func TestMySQLRepository_Create_DBError(t *testing.T) {
+func TestPostgresRepository_Create_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectExec(`INSERT INTO notifications`).WillReturnError(boom)
@@ -44,12 +44,12 @@ func TestMySQLRepository_Create_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_GetByID(t *testing.T) {
+func TestPostgresRepository_GetByID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM notifications\s+WHERE id = \?`).
+	mock.ExpectQuery(`FROM notifications\s+WHERE id = \$1`).
 		WithArgs("n-1").
 		WillReturnRows(sqlmock.NewRows(notificationColumns).
 			AddRow("n-1", "u-1", "Confirmed", "Your booking", TypeBookingConfirmed, "b-1", true, now))
@@ -62,7 +62,7 @@ func TestMySQLRepository_GetByID(t *testing.T) {
 	}, got)
 }
 
-func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+func TestPostgresRepository_GetByID_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -76,7 +76,7 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
 			mock.ExpectQuery(`FROM notifications`).WillReturnError(tc.dbErr)
 
@@ -86,12 +86,12 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_ListByUserID(t *testing.T) {
+func TestPostgresRepository_ListByUserID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM notifications\s+WHERE user_id = \?\s+ORDER BY created_at DESC`).
+	mock.ExpectQuery(`FROM notifications\s+WHERE user_id = \$1\s+ORDER BY created_at DESC`).
 		WithArgs("u-1").
 		WillReturnRows(sqlmock.NewRows(notificationColumns).
 			AddRow("n-2", "u-1", "B", "b", TypeRateTrip, nil, false, now).
@@ -105,9 +105,9 @@ func TestMySQLRepository_ListByUserID(t *testing.T) {
 	assert.True(t, got[1].IsRead)
 }
 
-func TestMySQLRepository_ListByUserID_DBError(t *testing.T) {
+func TestPostgresRepository_ListByUserID_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectQuery(`FROM notifications`).WillReturnError(boom)
@@ -116,7 +116,7 @@ func TestMySQLRepository_ListByUserID_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_MarkRead(t *testing.T) {
+func TestPostgresRepository_MarkRead(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -132,9 +132,9 @@ func TestMySQLRepository_MarkRead(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
-			tc.result(mock.ExpectExec(`UPDATE notifications SET is_read = TRUE WHERE id = \?`).WithArgs("n-1"))
+			tc.result(mock.ExpectExec(`UPDATE notifications SET is_read = TRUE WHERE id = \$1`).WithArgs("n-1"))
 
 			err := repo.MarkRead(context.Background(), "n-1")
 			if tc.want == nil {
@@ -146,9 +146,9 @@ func TestMySQLRepository_MarkRead(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_WithTx(t *testing.T) {
+func TestPostgresRepository_WithTx(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE notifications`).WillReturnResult(sqlmock.NewResult(0, 1))

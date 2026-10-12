@@ -6,33 +6,33 @@ import (
 	"errors"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// mysqlErrDuplicateEntry is the MySQL error number for a unique key
-// violation (ER_DUP_ENTRY).
-const mysqlErrDuplicateEntry = 1062
+// pgUniqueViolation is the Postgres SQLSTATE for a unique constraint
+// violation (unique_violation).
+const pgUniqueViolation = "23505"
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // deviceTokenRow mirrors the device_tokens table layout; mapping to/from the
@@ -59,18 +59,18 @@ func (r deviceTokenRow) toDomain() DeviceToken {
 	}
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, dt DeviceToken) (DeviceToken, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, dt DeviceToken) (DeviceToken, error) {
 	const query = `
 		INSERT INTO device_tokens (id, user_id, token, platform, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 	dt.ID = uuid.NewString()
 
 	_, err := repo.db.ExecContext(ctx, query,
 		dt.ID, dt.UserID, dt.Token, dt.Platform, dt.IsActive, dt.CreatedAt, dt.UpdatedAt)
 	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
 			return DeviceToken{}, ErrTokenTaken
 		}
 		return DeviceToken{}, err
@@ -79,11 +79,11 @@ func (repo *MySQLRepository) Create(ctx context.Context, dt DeviceToken) (Device
 	return dt, nil
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (DeviceToken, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (DeviceToken, error) {
 	const query = `
 		SELECT id, user_id, token, platform, is_active, created_at, updated_at
 		FROM device_tokens
-		WHERE id = ?`
+		WHERE id = $1`
 
 	var row deviceTokenRow
 	if err := repo.db.GetContext(ctx, &row, query, id); err != nil {
@@ -96,11 +96,11 @@ func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (DeviceToke
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) ListByUserID(ctx context.Context, userID string) ([]DeviceToken, error) {
+func (repo *PostgresRepository) ListByUserID(ctx context.Context, userID string) ([]DeviceToken, error) {
 	const query = `
 		SELECT id, user_id, token, platform, is_active, created_at, updated_at
 		FROM device_tokens
-		WHERE user_id = ?
+		WHERE user_id = $1
 		ORDER BY created_at DESC`
 
 	var rows []deviceTokenRow
@@ -115,8 +115,8 @@ func (repo *MySQLRepository) ListByUserID(ctx context.Context, userID string) ([
 	return tokens, nil
 }
 
-func (repo *MySQLRepository) Deactivate(ctx context.Context, id string) error {
-	const query = `UPDATE device_tokens SET is_active = FALSE WHERE id = ?`
+func (repo *PostgresRepository) Deactivate(ctx context.Context, id string) error {
+	const query = `UPDATE device_tokens SET is_active = FALSE WHERE id = $1`
 
 	result, err := repo.db.ExecContext(ctx, query, id)
 	if err != nil {

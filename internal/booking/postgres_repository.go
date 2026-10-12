@@ -12,22 +12,22 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // bookingRow mirrors the bookings table layout; mapping to/from the domain
@@ -91,14 +91,14 @@ func nullableTime(t time.Time) any {
 	return t
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, b Booking) (Booking, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, b Booking) (Booking, error) {
 	const query = `
 		INSERT INTO bookings (
 			id, customer_id, listing_id, trip_date_id, check_in_date, check_out_date,
 			number_of_guests, total_price, currency, status, payment_status, payment_id,
 			special_requests, created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 	b.ID = uuid.NewString()
 
@@ -113,13 +113,13 @@ func (repo *MySQLRepository) Create(ctx context.Context, b Booking) (Booking, er
 	return b, nil
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Booking, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (Booking, error) {
 	const query = `
 		SELECT id, customer_id, listing_id, trip_date_id, check_in_date, check_out_date,
 			number_of_guests, total_price, currency, status, payment_status, payment_id,
 			special_requests, created_at, updated_at
 		FROM bookings
-		WHERE id = ?`
+		WHERE id = $1`
 
 	var row bookingRow
 	if err := repo.db.GetContext(ctx, &row, query, id); err != nil {
@@ -132,13 +132,13 @@ func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Booking, e
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) ListByCustomerID(ctx context.Context, customerID string) ([]Booking, error) {
+func (repo *PostgresRepository) ListByCustomerID(ctx context.Context, customerID string) ([]Booking, error) {
 	const query = `
 		SELECT id, customer_id, listing_id, trip_date_id, check_in_date, check_out_date,
 			number_of_guests, total_price, currency, status, payment_status, payment_id,
 			special_requests, created_at, updated_at
 		FROM bookings
-		WHERE customer_id = ?
+		WHERE customer_id = $1
 		ORDER BY created_at DESC`
 
 	var rows []bookingRow

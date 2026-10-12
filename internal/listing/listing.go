@@ -1,5 +1,5 @@
 // Package listing implements the travel listing domain: the entity, its
-// persistence interface, business rules and the MySQL repository. It maps to
+// persistence interface, business rules and the Postgres repository. It maps to
 // the travel_listings table (named "travel" in the originating Kotlin spec;
 // renamed here for consistency with every other table matching its domain).
 package listing

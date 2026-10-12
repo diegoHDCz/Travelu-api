@@ -7,7 +7,7 @@ autenticação e validação. Sem ORM, sem framework web, sem query builder.
 ## Stack
 
 - HTTP: `net/http` (roteamento nativo do Go 1.22+, `mux.HandleFunc("GET /users/{id}", ...)`)
-- Banco: MySQL 8.4+ via `go-sql-driver/mysql` + `jmoiron/sqlx`, SQL escrito à mão
+- Banco: Postgres 17 (Supabase em produção) via `jackc/pgx/v5` (stdlib) + `jmoiron/sqlx`, SQL escrito à mão
 - Migrations: `pressly/goose` com os `.sql` embutidos no binário via `go:embed`
 - Autenticação: JWT HS256 (`golang-jwt/jwt/v5`) + refresh token opaco com rotação
 - Senhas: `bcrypt`
@@ -31,7 +31,7 @@ internal/
     wiring/                   monta o handler HTTP completo; importado por cmd/api e cmd/lambda
   user/                       entidade, repositório, service e regras de negócio
   auth/                       JWT, refresh tokens, handlers de auth e GET /users/me
-deploy/terraform/             VPC, Aurora Serverless v2, RDS Proxy, Lambda, API Gateway, CloudFront+WAF
+deploy/terraform/             Lambda, API Gateway, CloudFront+WAF (banco no Supabase)
 ```
 
 > **Nota de arquitetura:** `GET /api/v1/users/me` é implementado no pacote `auth`,
@@ -42,14 +42,14 @@ deploy/terraform/             VPC, Aurora Serverless v2, RDS Proxy, Lambda, API 
 
 ## Rodando localmente
 
-Pré-requisitos: Go 1.22+ e Docker (apenas para o MySQL de desenvolvimento — a
+Pré-requisitos: Go 1.22+ e Docker (apenas para o Postgres de desenvolvimento — a
 aplicação em si não roda em container).
 
 ```bash
 cp .env.example .env
 # edite o .env se quiser, principalmente o JWT_SECRET
 
-make db-up        # sobe um MySQL 8.4 local em localhost:3306
+make db-up        # sobe um Postgres 17 local em localhost:5432
 set -a && source .env && set +a
 make run          # roda cmd/api; aplica as migrations automaticamente no startup
 ```
@@ -68,7 +68,7 @@ Veja `.env.example` para a lista completa com comentários. Resumo:
 |--------------------------|:-----------:|--------------------------------------------------------------------------|
 | `APP_ENV`                |     não      | `development` (default) ou `production`                                |
 | `PORT`                   |     não      | porta HTTP interna (default `8080`)                                     |
-| `DATABASE_DSN`           |     sim      | DSN do MySQL (`parseTime=true&loc=UTC&charset=utf8mb4`, +`tls=preferred` em produção) |
+| `DATABASE_DSN`           |     sim      | DSN do Postgres (`postgres://…`; em produção `sslmode=require`, e `default_query_exec_mode=simple_protocol` no transaction pooler do Supabase) |
 | `JWT_SECRET`             |     sim      | segredo HS256; falha no startup se tiver menos de 32 bytes              |
 | `ACCESS_TOKEN_TTL`       |     não      | validade do access token (default `15m`)                                |
 | `REFRESH_TOKEN_TTL`      |     não      | validade do refresh token (default `720h`, 30 dias)                     |
@@ -163,7 +163,7 @@ make test   # todos os testes (go test -race ./...)
 ```
 
 Nenhum teste usa banco de dados. Services são testados com um `fakeRepository`
-em memória e os repositórios MySQL com [go-sqlmock](https://github.com/DATA-DOG/go-sqlmock)
+em memória e os repositórios Postgres com [go-sqlmock](https://github.com/DATA-DOG/go-sqlmock)
 via `internal/platform/database/dbtest`, que valida o SQL enviado, os argumentos
 e o mapeamento de linhas/erros (`sql.ErrNoRows`, ER_DUP_ENTRY).
 
@@ -177,7 +177,7 @@ make build-migrate   # cmd/migrate empacotado como dist/migrate/migrate.zip
 
 Produção: AWS Lambda (arm64, `provided.al2023`) atrás de API Gateway HTTP API,
 com CloudFront + WAF na frente (WAF não se conecta direto em HTTP API — só em
-REST API/ALB/CloudFront) e Aurora Serverless v2 + RDS Proxy como banco. Infra
+REST API/ALB/CloudFront) e o Postgres gerenciado do Supabase como banco (via Supavisor). Infra
 em `deploy/terraform/` (ver `deploy/terraform/README.md`). `cmd/api`/systemd/
 Caddy continuam existindo só para desenvolvimento local.
 

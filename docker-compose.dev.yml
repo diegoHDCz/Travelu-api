@@ -1,24 +1,22 @@
-# Apenas um MySQL local para desenvolvimento e para os testes de integração.
-# A aplicação em si NÃO roda em Docker: em produção é um binário estático (CGO_ENABLED=0)
-# gerenciado por systemd numa VM Linux ARM64, atrás do Caddy.
+# Apenas um Postgres local para desenvolvimento. Em produção o banco é o
+# Postgres gerenciado do Supabase; a imagem segue a mesma major version.
 services:
-  mysql:
-    image: mysql:8.4
+  postgres:
+    image: postgres:17
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: travelu
-      MYSQL_USER: app
-      MYSQL_PASSWORD: app
-      MYSQL_ROOT_PASSWORD: root
+      POSTGRES_DB: travelu
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      test: ["CMD-SHELL", "pg_isready -U app -d travelu"]
       interval: 5s
       timeout: 5s
       retries: 10
 
 volumes:
-  mysql_data:
+  postgres_data:

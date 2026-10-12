@@ -1,7 +1,7 @@
 # Deploy — passo a passo
 
-Guia prático para colocar a travelu-api no ar na AWS (Lambda + Aurora
-Serverless v2 + API Gateway + CloudFront/WAF) e configurar o deploy
+Guia prático para colocar a travelu-api no ar na AWS (Lambda + API Gateway +
+CloudFront/WAF, com o banco no Postgres gerenciado do Supabase) e configurar o deploy
 automático via GitHub Actions. Para o raciocínio por trás de cada decisão de
 arquitetura, ver `.claude/workload/go-refactor-deploy.md`; para referência
 rápida de comandos Terraform, ver `deploy/terraform/README.md` (este
@@ -12,10 +12,10 @@ documento é o passo a passo completo, aquele é o atalho do dia a dia).
 ```
 cliente → CloudFront (WAF: rate-limit em /api/v1/auth/*)
             → API Gateway HTTP API
-                → Lambda "api" (cmd/lambda, na VPC)
-                    → RDS Proxy → Aurora Serverless v2
+                → Lambda "api" (cmd/lambda, fora de VPC)
+                    → Supabase transaction pooler (6543) → Postgres
 
-CI/CD → Lambda "migrate" (cmd/migrate, na VPC) → RDS Proxy → Aurora
+CI/CD → Lambda "migrate" (cmd/migrate) → Supabase session pooler (5432) → Postgres
 ```
 
 ## Pré-requisitos
@@ -32,6 +32,21 @@ CI/CD → Lambda "migrate" (cmd/migrate, na VPC) → RDS Proxy → Aurora
 
 Todos os comandos abaixo assumem que você está na raiz do repositório, exceto
 quando indicado.
+
+## Passo 0 — criar o projeto no Supabase
+
+Crie o projeto em https://supabase.com (de preferência na mesma região da
+AWS, `us-east-1`). Em `Project Settings` → `Database` → `Connection string`,
+copie as duas URLs do **pooler** (não a conexão direta `db.<ref>.supabase.co`,
+que é só IPv6 — a Lambda sai por IPv4):
+
+- **Transaction pooler** (porta 6543) → `database_dsn_api`, com
+  `?sslmode=require&default_query_exec_mode=simple_protocol` (esse pooler não
+  mantém prepared statements entre transações).
+- **Session pooler** (porta 5432) → `database_dsn_migrate`, com
+  `?sslmode=require` (o goose precisa de sessão).
+
+O schema é criado pela migration (Passo 5); o banco começa vazio.
 
 ## Passo 1 — gerar os segredos
 
@@ -55,6 +70,8 @@ Edite `terraform.tfvars`:
 ```hcl
 jwt_secret           = "<o valor gerado no passo 1>"
 cors_allowed_origins = "https://seu-frontend.example.com"
+database_dsn_api     = "<transaction pooler do passo 0>"
+database_dsn_migrate = "<session pooler do passo 0>"
 # alarm_notification_email = "voce@example.com"  # opcional, recebe e-mail quando um alarme disparar
 ```
 
@@ -85,8 +102,7 @@ terraform plan
 terraform apply
 ```
 
-Reserve uns 10-15 minutos — a criação do cluster Aurora é a parte mais
-lenta. Ao final, anote os outputs (ou rode `terraform output` a qualquer
+A distribuição CloudFront é a parte mais lenta (alguns minutos). Ao final, anote os outputs (ou rode `terraform output` a qualquer
 momento depois):
 
 ```bash
@@ -194,11 +210,11 @@ correspondente) aplicada manualmente via `cmd/migrate`.
 ## Troubleshooting comum
 
 - **`/health` retorna 503**: Lambda não conseguiu conectar no banco. Confira
-  os security groups (`deploy/terraform/vpc.tf`) e se o RDS Proxy está
-  `AVAILABLE` (`aws rds describe-db-proxies`).
-- **Timeout na primeira invocação depois do apply**: cold start com ENI de
-  VPC pode levar alguns segundos a mais na primeira chamada; invocações
-  seguintes (warm) são rápidas.
+  os DSNs (host/porta do pooler, usuário `postgres.<ref>`, senha,
+  `sslmode=require`) e se o projeto Supabase não está pausado (projetos free
+  pausam após inatividade).
+- **`prepared statement "stmtcache_..." already exists`**: o DSN da API
+  aponta pro transaction pooler sem `default_query_exec_mode=simple_protocol`.
 - **`terraform apply` falha no `aws_iam_openid_connect_provider`**: geralmente
   já existe um provider OIDC do GitHub Actions na conta (de outro projeto) —
   rode `aws iam list-open-id-connect-providers` e, se achar um pra
@@ -216,7 +232,10 @@ cd deploy/terraform
 terraform destroy
 ```
 
-Cobrança para ter em mente enquanto estiver no ar: Aurora Serverless v2 cobra
-por ACU mesmo no mínimo (0.5 ACU parado, não é gratuito como seria uma VM
-Always Free), e CloudFront/WAF têm custo pequeno por request. Lambda e API
+O `terraform destroy` não toca no banco — o projeto Supabase é gerenciado
+fora do Terraform.
+
+Cobrança para ter em mente enquanto estiver no ar: o plano do Supabase
+(free pausa por inatividade; pago é mensal fixo), e CloudFront/WAF têm custo
+pequeno por request. Lambda e API
 Gateway são pay-per-use e ficam perto de zero sem tráfego.

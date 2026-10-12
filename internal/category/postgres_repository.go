@@ -4,36 +4,35 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// mysqlErrDuplicateEntry is the MySQL error number for a unique key
-// violation (ER_DUP_ENTRY).
-const mysqlErrDuplicateEntry = 1062
+// pgUniqueViolation is the Postgres SQLSTATE for a unique constraint
+// violation (unique_violation).
+const pgUniqueViolation = "23505"
 
-// MySQLRepository implements Repository on top of a sqlx MySQL pool or, when
+// PostgresRepository implements Repository on top of a sqlx Postgres pool or, when
 // built via WithTx, on top of an in-flight transaction.
-type MySQLRepository struct {
+type PostgresRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRepository builds a MySQLRepository backed by db.
-func NewMySQLRepository(db *sqlx.DB) *MySQLRepository {
-	return &MySQLRepository{db: db}
+// NewPostgresRepository builds a PostgresRepository backed by db.
+func NewPostgresRepository(db *sqlx.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// WithTx returns a MySQLRepository whose operations run against tx instead
+// WithTx returns a PostgresRepository whose operations run against tx instead
 // of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRepository) WithTx(tx *sqlx.Tx) *MySQLRepository {
-	return &MySQLRepository{db: tx}
+func (repo *PostgresRepository) WithTx(tx *sqlx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx}
 }
 
 // categoryRow mirrors the categories table layout; mapping to/from the
@@ -70,10 +69,10 @@ func nullable(s string) any {
 	return s
 }
 
-func (repo *MySQLRepository) Create(ctx context.Context, c Category) (Category, error) {
+func (repo *PostgresRepository) Create(ctx context.Context, c Category) (Category, error) {
 	const query = `
 		INSERT INTO categories (id, name, slug, description, icon, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	c.ID = uuid.NewString()
 	c.CreatedAt = time.Now().UTC()
@@ -83,9 +82,9 @@ func (repo *MySQLRepository) Create(ctx context.Context, c Category) (Category, 
 	_, err := repo.db.ExecContext(ctx, query,
 		c.ID, c.Name, c.Slug, nullable(c.Description), nullable(c.Icon), c.IsActive, c.CreatedAt, c.UpdatedAt)
 	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
-			return Category{}, duplicateKeyError(mysqlErr)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return Category{}, duplicateKeyError(pgErr)
 		}
 		return Category{}, err
 	}
@@ -93,32 +92,32 @@ func (repo *MySQLRepository) Create(ctx context.Context, c Category) (Category, 
 	return c, nil
 }
 
-// duplicateKeyError maps a ER_DUP_ENTRY error to the domain error for the
-// unique key it violated.
-func duplicateKeyError(err *mysql.MySQLError) error {
-	if strings.Contains(err.Message, "uq_categories_slug") {
+// duplicateKeyError maps a unique_violation error to the domain error for
+// the unique constraint it violated.
+func duplicateKeyError(err *pgconn.PgError) error {
+	if err.ConstraintName == "uq_categories_slug" {
 		return ErrSlugTaken
 	}
 	return ErrNameTaken
 }
 
-func (repo *MySQLRepository) GetByID(ctx context.Context, id string) (Category, error) {
+func (repo *PostgresRepository) GetByID(ctx context.Context, id string) (Category, error) {
 	const query = `
 		SELECT id, name, slug, description, icon, is_active, created_at, updated_at
 		FROM categories
-		WHERE id = ?`
+		WHERE id = $1`
 	return repo.getByField(ctx, query, id)
 }
 
-func (repo *MySQLRepository) GetBySlug(ctx context.Context, slug string) (Category, error) {
+func (repo *PostgresRepository) GetBySlug(ctx context.Context, slug string) (Category, error) {
 	const query = `
 		SELECT id, name, slug, description, icon, is_active, created_at, updated_at
 		FROM categories
-		WHERE slug = ?`
+		WHERE slug = $1`
 	return repo.getByField(ctx, query, slug)
 }
 
-func (repo *MySQLRepository) getByField(ctx context.Context, query, value string) (Category, error) {
+func (repo *PostgresRepository) getByField(ctx context.Context, query, value string) (Category, error) {
 	var row categoryRow
 	if err := repo.db.GetContext(ctx, &row, query, value); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -130,7 +129,7 @@ func (repo *MySQLRepository) getByField(ctx context.Context, query, value string
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRepository) List(ctx context.Context) ([]Category, error) {
+func (repo *PostgresRepository) List(ctx context.Context) ([]Category, error) {
 	const query = `
 		SELECT id, name, slug, description, icon, is_active, created_at, updated_at
 		FROM categories
@@ -148,20 +147,20 @@ func (repo *MySQLRepository) List(ctx context.Context) ([]Category, error) {
 	return categories, nil
 }
 
-func (repo *MySQLRepository) Update(ctx context.Context, c Category) (Category, error) {
+func (repo *PostgresRepository) Update(ctx context.Context, c Category) (Category, error) {
 	const query = `
 		UPDATE categories
-		SET name = ?, slug = ?, description = ?, icon = ?, is_active = ?, updated_at = ?
-		WHERE id = ?`
+		SET name = $1, slug = $2, description = $3, icon = $4, is_active = $5, updated_at = $6
+		WHERE id = $7`
 
 	c.UpdatedAt = time.Now().UTC()
 
 	result, err := repo.db.ExecContext(ctx, query,
 		c.Name, c.Slug, nullable(c.Description), nullable(c.Icon), c.IsActive, c.UpdatedAt, c.ID)
 	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
-			return Category{}, duplicateKeyError(mysqlErr)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return Category{}, duplicateKeyError(pgErr)
 		}
 		return Category{}, err
 	}

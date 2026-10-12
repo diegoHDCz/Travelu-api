@@ -45,5 +45,6 @@ deploy/terraform/*.tfstate.*
 deploy/terraform/*.tfvars
 !deploy/terraform/*.tfvars.example
 deploy/terraform/crash.log
+deploy/terraform/tfplan
 
 .claude

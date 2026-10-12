@@ -19,9 +19,9 @@ var reviewColumns = []string{
 	"is_verified", "is_approved", "created_at", "updated_at",
 }
 
-func TestMySQLRepository_Create(t *testing.T) {
+func TestPostgresRepository_Create(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	// Empty booking id and title must go out as NULL.
@@ -38,9 +38,9 @@ func TestMySQLRepository_Create(t *testing.T) {
 	assert.NotEmpty(t, created.ID)
 }
 
-func TestMySQLRepository_Create_DBError(t *testing.T) {
+func TestPostgresRepository_Create_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectExec(`INSERT INTO reviews`).WillReturnError(boom)
@@ -49,12 +49,12 @@ func TestMySQLRepository_Create_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_GetByID(t *testing.T) {
+func TestPostgresRepository_GetByID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM reviews\s+WHERE id = \?`).
+	mock.ExpectQuery(`FROM reviews\s+WHERE id = \$1`).
 		WithArgs("r-1").
 		WillReturnRows(sqlmock.NewRows(reviewColumns).
 			AddRow("r-1", "cust-1", "list-1", "b-1", 4, "Nice", "Good stay", true, true, now, now))
@@ -67,7 +67,7 @@ func TestMySQLRepository_GetByID(t *testing.T) {
 	}, got)
 }
 
-func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+func TestPostgresRepository_GetByID_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -81,7 +81,7 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
 			mock.ExpectQuery(`FROM reviews`).WillReturnError(tc.dbErr)
 
@@ -91,13 +91,13 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_ListByListingID(t *testing.T) {
+func TestPostgresRepository_ListByListingID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	// Only approved reviews are listed.
-	mock.ExpectQuery(`FROM reviews\s+WHERE listing_id = \? AND is_approved = TRUE\s+ORDER BY created_at DESC`).
+	mock.ExpectQuery(`FROM reviews\s+WHERE listing_id = \$1 AND is_approved = TRUE\s+ORDER BY created_at DESC`).
 		WithArgs("list-1").
 		WillReturnRows(sqlmock.NewRows(reviewColumns).
 			AddRow("r-2", "cust-2", "list-1", nil, 3, nil, nil, false, true, now, now).
@@ -110,9 +110,9 @@ func TestMySQLRepository_ListByListingID(t *testing.T) {
 	assert.Equal(t, "Top", got[1].Title)
 }
 
-func TestMySQLRepository_ListByListingID_DBError(t *testing.T) {
+func TestPostgresRepository_ListByListingID_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectQuery(`FROM reviews`).WillReturnError(boom)
@@ -121,11 +121,11 @@ func TestMySQLRepository_ListByListingID_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_Update(t *testing.T) {
+func TestPostgresRepository_Update(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 
-	mock.ExpectExec(`UPDATE reviews\s+SET rating = \?, title = \?, comment = \?, updated_at = \?\s+WHERE id = \?`).
+	mock.ExpectExec(`UPDATE reviews\s+SET rating = \$1, title = \$2, comment = \$3, updated_at = \$4\s+WHERE id = \$5`).
 		WithArgs(4, "Updated", nil, sqlmock.AnyArg(), "r-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -134,7 +134,7 @@ func TestMySQLRepository_Update(t *testing.T) {
 	assert.False(t, got.UpdatedAt.IsZero())
 }
 
-func TestMySQLRepository_Update_Errors(t *testing.T) {
+func TestPostgresRepository_Update_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -149,7 +149,7 @@ func TestMySQLRepository_Update_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 			tc.result(mock.ExpectExec(`UPDATE reviews`))
 
 			_, err := repo.Update(context.Background(), Review{ID: "r-1", Rating: 4})
@@ -158,9 +158,9 @@ func TestMySQLRepository_Update_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_WithTx(t *testing.T) {
+func TestPostgresRepository_WithTx(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO reviews`).WillReturnResult(sqlmock.NewResult(0, 1))

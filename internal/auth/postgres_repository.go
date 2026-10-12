@@ -12,23 +12,23 @@ import (
 	"github.com/diegoczajka/travelu-api/internal/platform/database"
 )
 
-// MySQLRefreshTokenRepository implements RefreshTokenRepository on top of a
-// sqlx MySQL pool or, when built via WithTx, on top of an in-flight
+// PostgresRefreshTokenRepository implements RefreshTokenRepository on top of a
+// sqlx Postgres pool or, when built via WithTx, on top of an in-flight
 // transaction.
-type MySQLRefreshTokenRepository struct {
+type PostgresRefreshTokenRepository struct {
 	db database.SQLExecutor
 }
 
-// NewMySQLRefreshTokenRepository builds a MySQLRefreshTokenRepository backed by db.
-func NewMySQLRefreshTokenRepository(db *sqlx.DB) *MySQLRefreshTokenRepository {
-	return &MySQLRefreshTokenRepository{db: db}
+// NewPostgresRefreshTokenRepository builds a PostgresRefreshTokenRepository backed by db.
+func NewPostgresRefreshTokenRepository(db *sqlx.DB) *PostgresRefreshTokenRepository {
+	return &PostgresRefreshTokenRepository{db: db}
 }
 
-// WithTx returns a MySQLRefreshTokenRepository whose operations run against
+// WithTx returns a PostgresRefreshTokenRepository whose operations run against
 // tx instead of the pool, so they participate in a transaction started by
 // database.WithTx.
-func (repo *MySQLRefreshTokenRepository) WithTx(tx *sqlx.Tx) *MySQLRefreshTokenRepository {
-	return &MySQLRefreshTokenRepository{db: tx}
+func (repo *PostgresRefreshTokenRepository) WithTx(tx *sqlx.Tx) *PostgresRefreshTokenRepository {
+	return &PostgresRefreshTokenRepository{db: tx}
 }
 
 type refreshTokenRow struct {
@@ -54,10 +54,10 @@ func (r refreshTokenRow) toDomain() RefreshToken {
 	return rt
 }
 
-func (repo *MySQLRefreshTokenRepository) Create(ctx context.Context, rt RefreshToken) (RefreshToken, error) {
+func (repo *PostgresRefreshTokenRepository) Create(ctx context.Context, rt RefreshToken) (RefreshToken, error) {
 	const query = `
 		INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?)`
+		VALUES ($1, $2, $3, $4, $5)`
 
 	rt.ID = uuid.NewString()
 
@@ -68,11 +68,11 @@ func (repo *MySQLRefreshTokenRepository) Create(ctx context.Context, rt RefreshT
 	return rt, nil
 }
 
-func (repo *MySQLRefreshTokenRepository) GetByTokenHash(ctx context.Context, tokenHash string) (RefreshToken, error) {
+func (repo *PostgresRefreshTokenRepository) GetByTokenHash(ctx context.Context, tokenHash string) (RefreshToken, error) {
 	const query = `
 		SELECT id, user_id, token_hash, expires_at, revoked_at, created_at
 		FROM refresh_tokens
-		WHERE token_hash = ?`
+		WHERE token_hash = $1`
 
 	var row refreshTokenRow
 	if err := repo.db.GetContext(ctx, &row, query, tokenHash); err != nil {
@@ -85,14 +85,14 @@ func (repo *MySQLRefreshTokenRepository) GetByTokenHash(ctx context.Context, tok
 	return row.toDomain(), nil
 }
 
-func (repo *MySQLRefreshTokenRepository) Revoke(ctx context.Context, id string) error {
-	const query = `UPDATE refresh_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`
+func (repo *PostgresRefreshTokenRepository) Revoke(ctx context.Context, id string) error {
+	const query = `UPDATE refresh_tokens SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL`
 	_, err := repo.db.ExecContext(ctx, query, time.Now().UTC(), id)
 	return err
 }
 
-func (repo *MySQLRefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID string) error {
-	const query = `UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`
+func (repo *PostgresRefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID string) error {
+	const query = `UPDATE refresh_tokens SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL`
 	_, err := repo.db.ExecContext(ctx, query, time.Now().UTC(), userID)
 	return err
 }

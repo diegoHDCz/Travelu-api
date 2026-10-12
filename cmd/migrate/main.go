@@ -2,8 +2,8 @@
 // packaged and deployed as its own Lambda function, invoked once per deploy
 // by the CI/CD pipeline (via `aws lambda invoke`) before traffic is pointed
 // at the new cmd/lambda version — never from the request-serving Lambda's
-// cold start, and never from a CI runner directly, since the database lives
-// in a private subnet the runner has no route to.
+// cold start, and never from a CI runner directly, so the database
+// credentials stay in the Lambda's environment and never reach CI.
 package main
 
 import (

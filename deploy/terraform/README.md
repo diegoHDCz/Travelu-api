@@ -1,7 +1,9 @@
 # Infraestrutura (Terraform)
 
-Provisiona VPC + Aurora Serverless v2 + RDS Proxy + Lambda (API + migrate) +
-API Gateway HTTP API + CloudFront + WAF. Ver
+Provisiona Lambda (API + migrate) + API Gateway HTTP API + CloudFront + WAF.
+O banco é o Postgres gerenciado do Supabase — fora do Terraform; as Lambdas
+recebem os DSNs via `database_dsn_api` (transaction pooler, 6543) e
+`database_dsn_migrate` (session pooler, 5432). Ver
 `.claude/workload/go-refactor-deploy.md` para o raciocínio por trás de cada
 decisão.
 

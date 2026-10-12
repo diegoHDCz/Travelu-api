@@ -20,9 +20,9 @@ var listingColumns = []string{
 	"rating", "review_count", "is_active", "created_at", "updated_at",
 }
 
-func TestMySQLRepository_Create(t *testing.T) {
+func TestPostgresRepository_Create(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	capacity := 4
 
@@ -41,9 +41,9 @@ func TestMySQLRepository_Create(t *testing.T) {
 	assert.NotEmpty(t, created.ID)
 }
 
-func TestMySQLRepository_Create_DBError(t *testing.T) {
+func TestPostgresRepository_Create_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectExec(`INSERT INTO travel_listings`).WillReturnError(boom)
@@ -52,14 +52,14 @@ func TestMySQLRepository_Create_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_GetByID(t *testing.T) {
+func TestPostgresRepository_GetByID(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	from := now.AddDate(0, 1, 0)
 	to := from.AddDate(0, 1, 0)
 
-	mock.ExpectQuery(`FROM travel_listings\s+WHERE id = \?`).
+	mock.ExpectQuery(`FROM travel_listings\s+WHERE id = \$1`).
 		WithArgs("l-1").
 		WillReturnRows(sqlmock.NewRows(listingColumns).AddRow(
 			"l-1", "v-1", "Beach Hotel", "A nice hotel", CategoryHotel, "Rio", "Rio de Janeiro", "BR",
@@ -77,7 +77,7 @@ func TestMySQLRepository_GetByID(t *testing.T) {
 	}, got)
 }
 
-func TestMySQLRepository_GetByID_Errors(t *testing.T) {
+func TestPostgresRepository_GetByID_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -91,7 +91,7 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 
 			mock.ExpectQuery(`FROM travel_listings`).WillReturnError(tc.dbErr)
 
@@ -101,9 +101,9 @@ func TestMySQLRepository_GetByID_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_ListActive(t *testing.T) {
+func TestPostgresRepository_ListActive(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	mock.ExpectQuery(`FROM travel_listings\s+WHERE is_active = TRUE\s+ORDER BY created_at DESC`).
@@ -117,9 +117,9 @@ func TestMySQLRepository_ListActive(t *testing.T) {
 	assert.True(t, got[0].AvailableFrom.IsZero())
 }
 
-func TestMySQLRepository_ListActive_DBError(t *testing.T) {
+func TestPostgresRepository_ListActive_DBError(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	boom := errors.New("boom")
 
 	mock.ExpectQuery(`FROM travel_listings`).WillReturnError(boom)
@@ -128,12 +128,12 @@ func TestMySQLRepository_ListActive_DBError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestMySQLRepository_Update(t *testing.T) {
+func TestPostgresRepository_Update(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 
-	mock.ExpectExec(`UPDATE travel_listings\s+SET title = \?`).
+	mock.ExpectExec(`UPDATE travel_listings\s+SET title = \$1`).
 		WithArgs("New", "d", CategoryHotel, "loc", nil, "BR",
 			50.0, "USD", nil, from, nil,
 			nil, "pool", false, sqlmock.AnyArg(), "l-1").
@@ -147,7 +147,7 @@ func TestMySQLRepository_Update(t *testing.T) {
 	assert.False(t, got.UpdatedAt.IsZero())
 }
 
-func TestMySQLRepository_Update_Errors(t *testing.T) {
+func TestPostgresRepository_Update_Errors(t *testing.T) {
 	boom := errors.New("boom")
 
 	tests := []struct {
@@ -162,7 +162,7 @@ func TestMySQLRepository_Update_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := dbtest.New(t)
-			repo := NewMySQLRepository(db)
+			repo := NewPostgresRepository(db)
 			tc.result(mock.ExpectExec(`UPDATE travel_listings`))
 
 			_, err := repo.Update(context.Background(), Listing{ID: "l-1"})
@@ -171,9 +171,9 @@ func TestMySQLRepository_Update_Errors(t *testing.T) {
 	}
 }
 
-func TestMySQLRepository_WithTx(t *testing.T) {
+func TestPostgresRepository_WithTx(t *testing.T) {
 	db, mock := dbtest.New(t)
-	repo := NewMySQLRepository(db)
+	repo := NewPostgresRepository(db)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO travel_listings`).WillReturnResult(sqlmock.NewResult(0, 1))

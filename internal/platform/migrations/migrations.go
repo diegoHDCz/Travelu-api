@@ -1,5 +1,5 @@
 // Package migrations embeds the goose SQL migrations and applies them to
-// the MySQL database at application startup.
+// the Postgres database.
 package migrations
 
 import (
@@ -25,7 +25,7 @@ func Run(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("sub migrations fs: %w", err)
 	}
 
-	provider, err := goose.NewProvider(goose.DialectMySQL, db, migrationsFS)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrationsFS)
 	if err != nil {
 		return fmt.Errorf("create goose provider: %w", err)
 	}
