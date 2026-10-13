@@ -24,6 +24,10 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
 servers:
+  - url: /
+    description: >
+      Mesmo host que serve esta página (o domínio do CloudFront em produção,
+      localhost em dev). Use este para o "Try it out" do /docs.
   - url: http://localhost:8080
     description: Desenvolvimento local (PORT default 8080)
 
