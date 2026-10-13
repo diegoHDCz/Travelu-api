@@ -144,17 +144,16 @@ antes de seguir.
 
 No GitHub: `Settings` → `Secrets and variables` → `Actions`.
 
-Em **Secrets**, adicione:
+Em **Variables**, adicione:
 
 | Nome                  | Valor                                                        |
 |-----------------------|---------------------------------------------------------------|
 | `AWS_DEPLOY_ROLE_ARN` | `terraform output -raw github_actions_deploy_role_arn`         |
+| `API_BASE_URL`        | `terraform output -raw cloudfront_domain_name` (sem `https://`) |
 
-Em **Variables**, adicione:
-
-| Nome            | Valor                                                              |
-|-----------------|----------------------------------------------------------------------|
-| `API_BASE_URL`  | `terraform output -raw cloudfront_domain_name` (sem `https://`)      |
+O ARN da role fica em Variables (e não em Secrets) porque não é sigiloso —
+só o token OIDC deste repo consegue assumi-la — e assim dá para conferir o
+valor salvo.
 
 Essa role usa OIDC federation (sem access key de longa duração salva no
 GitHub) e só tem permissão para atualizar o código das duas Lambdas — ver
