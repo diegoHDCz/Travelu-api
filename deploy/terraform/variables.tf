@@ -60,6 +60,18 @@ variable "github_repo" {
   default     = "diegoHDCz/Travelu-api"
 }
 
+variable "github_owner_id" {
+  description = "Numeric GitHub ID of the github_repo owner. GitHub may embed it in the OIDC sub claim (repo:owner@<id>/name@<id>:...)."
+  type        = string
+  default     = "67860687"
+}
+
+variable "github_repo_id" {
+  description = "Numeric GitHub ID of github_repo, embedded in the OIDC sub claim alongside github_owner_id."
+  type        = string
+  default     = "1402888129"
+}
+
 variable "alarm_notification_email" {
   description = "If set, an SNS subscription is created so CloudWatch alarms email this address. Leave empty to skip (alarms still fire and show in the console, just without a subscriber)."
   type        = string

@@ -2,6 +2,16 @@
 # AWS access keys stored as a GitHub secret. .github/workflows/deploy.yml's
 # aws-actions/configure-aws-credentials step assumes this role.
 
+locals {
+  # "owner@<owner_id>/name@<repo_id>" — the ID-qualified repo form GitHub can
+  # put in the OIDC sub claim.
+  github_repo_with_ids = format(
+    "%s@%s/%s@%s",
+    split("/", var.github_repo)[0], var.github_owner_id,
+    split("/", var.github_repo)[1], var.github_repo_id,
+  )
+}
+
 data "tls_certificate" "github_actions" {
   url = "https://token.actions.githubusercontent.com/.well-known/openid-configuration"
 }
@@ -25,11 +35,16 @@ resource "aws_iam_role" "github_actions_deploy" {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
-        # Scoped to this repo, any branch/PR/tag — tighten to
-        # "repo:${var.github_repo}:ref:refs/heads/main" if only main should
-        # ever be able to deploy.
+        # Scoped to this repo, any branch/PR/tag — tighten the ":*" suffix to
+        # ":ref:refs/heads/main" if only main should ever be able to deploy.
+        # GitHub's sub claim may embed immutable owner/repo IDs
+        # ("repo:owner@123/name@456:...") instead of the plain
+        # "repo:owner/name:..." form, so both are accepted.
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:*",
+            "repo:${local.github_repo_with_ids}:*",
+          ]
         }
       }
     }]
