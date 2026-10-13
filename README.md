@@ -25,13 +25,18 @@ cmd/
 internal/
   config/                    carregamento de configuração via env vars
   platform/
-    database/                pool de conexões sqlx + helper de transação
-    migrations/               migrations embutidas (go:embed) + execução no startup
+    database/                pool de conexões sqlx (driver pgx) + helper de transação
+      dbtest/                 helper de sqlmock para os testes dos repositórios
+    migrations/               migrations goose embutidas (go:embed), em migrations/sql/
     httpx/                    JSON helpers, erro padrão, middlewares genéricos
+    audit/                    log estruturado de auditoria das requisições
+    apidocs/                  GET /docs e GET /docs/openapi.yaml
     wiring/                   monta o handler HTTP completo; importado por cmd/api e cmd/lambda
   user/                       entidade, repositório, service e regras de negócio
   auth/                       JWT, refresh tokens, handlers de auth e GET /users/me
-deploy/terraform/             Lambda, API Gateway, CloudFront+WAF (banco no Supabase)
+  booking/ category/ devicetoken/ listing/ notification/ review/ tripdate/
+                              demais domínios, cada um com entidade, service e postgres_repository.go
+deploy/terraform/             Lambda, API Gateway, CloudFront+WAF (banco no Supabase, fora do Terraform)
 ```
 
 > **Nota de arquitetura:** `GET /api/v1/users/me` é implementado no pacote `auth`,
@@ -60,6 +65,18 @@ API Gateway, sem bind de socket (ver "Build e deploy" abaixo).
 
 Para derrubar o banco de desenvolvimento: `make db-down`.
 
+Migrations (goose, contra o Postgres local do `make db-up`):
+
+```bash
+make migrate-up               # aplica as pendentes (o make run já faz isso no startup)
+make migrate-down             # desfaz a última
+make migrate-new name=foo     # cria internal/platform/migrations/sql/<timestamp>_foo.sql
+```
+
+Para apontar o ambiente local para um projeto do Supabase em vez do container,
+basta trocar o `DATABASE_DSN` no `.env` pela string do session pooler (porta
+`5432`, ver `.env.example`).
+
 ## Variáveis de ambiente
 
 Veja `.env.example` para a lista completa com comentários. Resumo:
@@ -68,7 +85,10 @@ Veja `.env.example` para a lista completa com comentários. Resumo:
 |--------------------------|:-----------:|--------------------------------------------------------------------------|
 | `APP_ENV`                |     não      | `development` (default) ou `production`                                |
 | `PORT`                   |     não      | porta HTTP interna (default `8080`)                                     |
-| `DATABASE_DSN`           |     sim      | DSN do Postgres (`postgres://…`; em produção `sslmode=require`, e `default_query_exec_mode=simple_protocol` no transaction pooler do Supabase) |
+| `DATABASE_DSN`           |     sim      | DSN do Postgres (`postgres://…`); em produção sempre com `sslmode=require` — ver "Banco (Supabase)" abaixo |
+| `DATABASE_MAX_OPEN_CONNS` |    não      | máximo de conexões abertas no pool (default `25`; `4` na Lambda da API)  |
+| `DATABASE_MAX_IDLE_CONNS` |    não      | máximo de conexões ociosas no pool (default `25`; `4` na Lambda da API)  |
+| `DATABASE_CONN_MAX_LIFETIME` | não     | tempo máximo de vida de uma conexão (default `5m`)                      |
 | `JWT_SECRET`             |     sim      | segredo HS256; falha no startup se tiver menos de 32 bytes              |
 | `ACCESS_TOKEN_TTL`       |     não      | validade do access token (default `15m`)                                |
 | `REFRESH_TOKEN_TTL`      |     não      | validade do refresh token (default `720h`, 30 dias)                     |
@@ -165,7 +185,8 @@ make test   # todos os testes (go test -race ./...)
 Nenhum teste usa banco de dados. Services são testados com um `fakeRepository`
 em memória e os repositórios Postgres com [go-sqlmock](https://github.com/DATA-DOG/go-sqlmock)
 via `internal/platform/database/dbtest`, que valida o SQL enviado, os argumentos
-e o mapeamento de linhas/erros (`sql.ErrNoRows`, ER_DUP_ENTRY).
+e o mapeamento de linhas/erros (`sql.ErrNoRows` e `*pgconn.PgError` com SQLSTATE
+`23505`/`unique_violation`, traduzido para o erro de domínio pelo nome da constraint).
 
 ## Build e deploy
 
@@ -178,8 +199,25 @@ make build-migrate   # cmd/migrate empacotado como dist/migrate/migrate.zip
 Produção: AWS Lambda (arm64, `provided.al2023`) atrás de API Gateway HTTP API,
 com CloudFront + WAF na frente (WAF não se conecta direto em HTTP API — só em
 REST API/ALB/CloudFront) e o Postgres gerenciado do Supabase como banco (via Supavisor). Infra
-em `deploy/terraform/` (ver `deploy/terraform/README.md`). `cmd/api`/systemd/
-Caddy continuam existindo só para desenvolvimento local.
+em `deploy/terraform/` (ver `deploy/terraform/README.md`). `cmd/api` continua
+existindo só para desenvolvimento local.
+
+### Banco (Supabase)
+
+O banco não é provisionado pelo Terraform — o projeto é criado no Supabase e o
+Terraform só recebe as duas DSNs (sensíveis, via `TF_VAR_*` ou `*.tfvars`
+fora do git), ambas pelo pooler Supavisor:
+
+| Variável Terraform     | Lambda        | Pooler                      | DSN |
+|------------------------|---------------|-----------------------------|-----|
+| `database_dsn_api`     | `cmd/lambda`  | transaction pooler, `6543`  | `postgres://postgres.<ref>:<senha>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require&default_query_exec_mode=simple_protocol` |
+| `database_dsn_migrate` | `cmd/migrate` | session pooler, `5432`      | `postgres://postgres.<ref>:<senha>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require` |
+
+- A API usa o transaction pooler, que não mantém prepared statements entre
+  transações — por isso o `default_query_exec_mode=simple_protocol`. O pool por
+  instância fica pequeno (`4`): quem absorve a concorrência das Lambdas é o pooler.
+- As migrations precisam de semântica de sessão (goose), então usam o session pooler.
+- Não use o host direto `db.<ref>.supabase.co`: ele é só IPv6 e a saída da Lambda é IPv4.
 
 As migrations não rodam mais no cold start do Lambda que serve requisições
 (`cmd/lambda`) — rodar toda invocação concorrente seria lento e goose não
